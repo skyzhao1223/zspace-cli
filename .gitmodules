@@ -1,0 +1,3 @@
+[submodule "promo"]
+	path = promo
+	url = https://github.com/skyzhao1223/zspace-cli-promo.git
