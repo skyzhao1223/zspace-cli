@@ -162,6 +162,16 @@ All operations go through the ZSpace internal API at `127.0.0.1:13579`.
 
 ---
 
+## Skills
+
+### Media Manager
+
+A [Cursor AI Skill](https://docs.cursor.com/features/skills) for organizing movies and TV series on your ZSpace NAS. See [`skills/media-manager/`](skills/media-manager/) for details.
+
+Naming conventions and general methodology are defined in the standalone [media-naming-guide](https://github.com/skyzhao1223/media-naming-guide) — this skill adds ZSpace API-specific logic (pagination, rename, move, content verification).
+
+---
+
 ## Roadmap
 
 - [ ] File upload/download support
@@ -240,6 +250,12 @@ zs tree /sata11/my/data -d 3       # 树形视图
 - "帮我把影视文件夹里的电影按年份分类"
 - "查找所有大于 10GB 的文件"
 - "把百度网盘文件夹里的文档移到文档同步文件夹"
+
+### Cursor Skill: 影视文件管理
+
+内置 [Cursor AI Skill](https://docs.cursor.com/features/skills)，可以让 AI 帮你整理 NAS 上的影视资源。详见 [`skills/media-manager/`](skills/media-manager/)。
+
+命名规范和通用方法论见独立项目 [media-naming-guide](https://github.com/skyzhao1223/media-naming-guide)。
 
 ### 工作原理
 
