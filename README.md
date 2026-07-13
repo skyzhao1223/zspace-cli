@@ -134,7 +134,7 @@ Then ask your AI: "帮我把 NAS 上影视文件夹里的视频按年份整理�
 ┌─────────────┐      ┌──────────────────┐      ┌──────────┐
 │  zs CLI     │      │  ZSpace Desktop  │      │  ZSpace  │
 │  Python SDK ├─────►│  Client (proxy)  ├─────►│  NAS     │
-│  MCP Server │ HTTP │  127.0.0.1:13579 │ P2P  │  Device  │
+│  MCP Server │ HTTP │  127.0.0.1:<localPort> │ P2P  │  Device  │
 └─────────────┘      └──────────────────┘      └──────────┘
 ```
 
@@ -146,7 +146,7 @@ The ZSpace desktop client maintains an encrypted tunnel to your NAS and exposes 
 
 ## API Reference
 
-All operations go through the ZSpace internal API at `127.0.0.1:13579`.
+All operations go through the ZSpace internal API at the local proxy port (`state.app.localPort` in `vuex.json`, default `13579`). Override with `ZSPACE_BASE_URL` if needed.
 
 | Endpoint | Method | Key Parameters |
 |----------|--------|---------------|
@@ -259,7 +259,7 @@ zs tree /sata11/my/data -d 3       # 树形视图
 
 ### 工作原理
 
-极空间桌面客户端在本机 `127.0.0.1:13579` 建立了到 NAS 的加密代理。zspace-cli 通过这个代理调用和官方 Web UI 完全相同的 API，因此：
+极空间桌面客户端在本机 `127.0.0.1:<localPort>`（从 `vuex.json` 的 `localPort` 读取，默认 13579）建立了到 NAS 的加密代理。zspace-cli 通过这个代理调用和官方 Web UI 完全相同的 API，因此：
 
 - 不需要 NAS 在局域网内
 - 不需要配置 DDNS 或端口转发

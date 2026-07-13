@@ -18,6 +18,7 @@ class Credentials:
 
 _DEFAULT_CONFIG_DIR = Path.home() / "Library" / "Application Support" / "zspace"
 _VUEX_FILENAME = "vuex.json"
+_DEFAULT_PORT = 13579
 
 
 def locate_config(config_dir: Path | str | None = None) -> Path:
@@ -32,12 +33,29 @@ def locate_config(config_dir: Path | str | None = None) -> Path:
     return vuex
 
 
-def load_credentials(config_dir: Path | str | None = None) -> Credentials:
-    """Load auth credentials from the ZSpace desktop client config."""
+def _load_vuex_state(config_dir: Path | str | None = None) -> dict:
     vuex_path = locate_config(config_dir)
     data = json.loads(vuex_path.read_text(encoding="utf-8"))
+    return data.get("state", data)
 
-    state = data.get("state", data)
+
+def load_base_url(config_dir: Path | str | None = None) -> str:
+    """Resolve the local ZSpace desktop client proxy URL.
+
+    Priority: ZSPACE_BASE_URL env var > vuex.json localPort > default 13579.
+    """
+    env_url = os.environ.get("ZSPACE_BASE_URL")
+    if env_url:
+        return env_url.rstrip("/")
+
+    state = _load_vuex_state(config_dir)
+    port = state.get("app", {}).get("localPort", _DEFAULT_PORT)
+    return f"http://127.0.0.1:{port}"
+
+
+def load_credentials(config_dir: Path | str | None = None) -> Credentials:
+    """Load auth credentials from the ZSpace desktop client config."""
+    state = _load_vuex_state(config_dir)
     user = state["user"]
     nas = state["nas"]
     app = state.get("app", {})
@@ -50,12 +68,13 @@ def load_credentials(config_dir: Path | str | None = None) -> Credentials:
     )
 
 
-def check_client_running(base_url: str = "http://127.0.0.1:13579") -> bool:
+def check_client_running(base_url: str | None = None) -> bool:
     """Quick check if the ZSpace desktop client proxy is reachable."""
     import httpx
 
+    url = (base_url or load_base_url()).rstrip("/")
     try:
-        r = httpx.get(f"{base_url}/home/", timeout=3)
+        r = httpx.get(f"{url}/home/", timeout=3)
         return r.status_code < 500
     except (httpx.ConnectError, httpx.TimeoutException):
         return False

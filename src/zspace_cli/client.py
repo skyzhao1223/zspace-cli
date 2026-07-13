@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from zspace_cli.auth import Credentials, check_client_running, load_credentials
+from zspace_cli.auth import Credentials, check_client_running, load_base_url, load_credentials
 
 
 @dataclass
@@ -48,17 +48,18 @@ class ZSpaceError(Exception):
 class ZSpaceClient:
     """High-level client for ZSpace NAS file operations.
 
-    Connects through the local desktop client proxy (127.0.0.1:13579).
+    Connects through the local desktop client proxy (read from vuex.json localPort).
     All operations are pure API calls — no SSH or WebDAV needed.
     """
 
     def __init__(
         self,
-        base_url: str = "http://127.0.0.1:13579",
+        base_url: str | None = None,
         credentials: Credentials | None = None,
         config_dir: Path | str | None = None,
     ):
-        self.base_url = base_url.rstrip("/")
+        self._config_dir = config_dir
+        self.base_url = (base_url or load_base_url(config_dir)).rstrip("/")
         self._creds = credentials or load_credentials(config_dir)
         self._http = httpx.Client(
             base_url=self.base_url,
@@ -91,16 +92,32 @@ class ZSpaceClient:
         rnd = f"{int(time.time())}{random.randint(1000,9999)}_{random.randint(1000,9999)}"
         return f"{endpoint}?&rnd={rnd}&webagent=v2"
 
+    def _handle_http_error(self, exc: Exception) -> None:
+        if isinstance(exc, httpx.HTTPStatusError):
+            raise ZSpaceError(
+                str(exc.response.status_code),
+                f"极空间客户端代理错误 ({exc.response.status_code})，请确认客户端已运行并登录。",
+            ) from exc
+        if isinstance(exc, (httpx.ConnectError, httpx.TimeoutException)):
+            raise ZSpaceError(
+                "CONNECTION",
+                "极空间客户端代理不可达，请确认客户端已运行并登录。",
+            ) from exc
+        raise exc
+
     def _post(self, endpoint: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
         data = self._common_params()
         if extra:
             data.update(extra)
-        resp = self._http.post(
-            self._url(endpoint),
-            data=data,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        resp.raise_for_status()
+        try:
+            resp = self._http.post(
+                self._url(endpoint),
+                data=data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            resp.raise_for_status()
+        except (httpx.HTTPStatusError, httpx.ConnectError, httpx.TimeoutException) as exc:
+            self._handle_http_error(exc)
         body = resp.json()
         if body.get("code") != "200":
             raise ZSpaceError(body.get("code", "?"), body.get("msg", "unknown error"))
@@ -120,12 +137,15 @@ class ZSpaceClient:
             parts.append(f"paths%5B%5D={_urlencode(p)}")
         body_str = "&".join(parts)
 
-        resp = self._http.post(
-            self._url(endpoint),
-            content=body_str,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        resp.raise_for_status()
+        try:
+            resp = self._http.post(
+                self._url(endpoint),
+                content=body_str,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            resp.raise_for_status()
+        except (httpx.HTTPStatusError, httpx.ConnectError, httpx.TimeoutException) as exc:
+            self._handle_http_error(exc)
         body = resp.json()
         if body.get("code") != "200":
             raise ZSpaceError(body.get("code", "?"), body.get("msg", "unknown error"))

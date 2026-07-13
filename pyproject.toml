@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zspace-cli"
-version = "0.1.0"
+version = "0.1.1"
 description = "CLI & SDK for ZSpace (极空间) NAS — manage files from your terminal or AI agents"
 readme = "README.md"
 license = "MIT"
