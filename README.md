@@ -168,7 +168,12 @@ All operations go through the ZSpace internal API at `127.0.0.1:13579`.
 
 A [Cursor AI Skill](https://docs.cursor.com/features/skills) for organizing movies and TV series on your ZSpace NAS. See [`skills/media-manager/`](skills/media-manager/) for details.
 
-Naming conventions and general methodology are defined in the standalone [media-naming-guide](https://github.com/skyzhao1223/media-naming-guide) — this skill adds ZSpace API-specific logic (pagination, rename, move, content verification).
+Naming conventions and general methodology live in the standalone **[media-naming-guide](https://github.com/skyzhao1223/media-naming-guide)** (works with any NAS / Plex / Emby / Jellyfin). This skill adds ZSpace API-specific logic: pagination, rename/move, and content verification.
+
+| Repo | Role |
+|------|------|
+| **[media-naming-guide](https://github.com/skyzhao1223/media-naming-guide)** | Naming conventions — storage-agnostic |
+| **zspace-cli** (this repo) | ZSpace file ops + media-manager skill |
 
 ---
 
@@ -255,7 +260,12 @@ zs tree /sata11/my/data -d 3       # 树形视图
 
 内置 [Cursor AI Skill](https://docs.cursor.com/features/skills)，可以让 AI 帮你整理 NAS 上的影视资源。详见 [`skills/media-manager/`](skills/media-manager/)。
 
-命名规范和通用方法论见独立项目 [media-naming-guide](https://github.com/skyzhao1223/media-naming-guide)。
+命名规范和通用方法论见独立项目 **[media-naming-guide](https://github.com/skyzhao1223/media-naming-guide)**（适用任意 NAS / Plex / Emby / Jellyfin）。本仓库的 skill 负责极空间 API 相关实现（分页、重命名、内容验证）。
+
+| 仓库 | 定位 |
+|------|------|
+| **[media-naming-guide](https://github.com/skyzhao1223/media-naming-guide)** | 通用命名规范，不绑存储 |
+| **zspace-cli**（本仓库） | 极空间文件操作 + 影视整理 skill |
 
 ### 工作原理
 
