@@ -1,31 +1,68 @@
 # zspace-cli
 
-**CLI, SDK & MCP Server for ZSpace (极空间) NAS**
+**用自然语言管极空间 NAS** — Agent Skill + 零配置底座（CLI / SDK / MCP）
 
-> Manage your 极空间 NAS files from the terminal, Python scripts, or AI agents — zero config, no SSH needed.
+> macOS 上极空间桌面客户端已登录即可，不填密码、不开 SSH、不配 DDNS。
 
-[English](#features) | [中文](#功能特性)
+[English](#why-zspace-cli) · [中文](#中文说明) · [Skills](skills/README.md)
+
+---
+
+## 30 秒开始（推荐：Skill）
+
+```bash
+pip install zspace-cli
+zs check                          # ✓ 读到桌面客户端登录态
+
+# 复制 skill 到你的 Agent 项目
+cp -r skills/zspace-nas ~/your-project/.cursor/skills/    # 或 .../skills/
+```
+
+然后对 Agent 说：
+
+- 「列出 NAS `/sata11/my/data` 里的文件」
+- 「帮我扫一下影视库命名有没有问题」→ 再装 [`media-manager`](skills/media-manager/)
+
+| Skill | 用途 |
+|-------|------|
+| [`zspace-nas`](skills/zspace-nas/) | 通用文件管理 |
+| [`media-manager`](skills/media-manager/) | 影视命名扫描 / 整理编排 |
+| [media-naming-guide](https://github.com/skyzhao1223/media-naming-guide) | 通用命名规范（不绑极空间） |
+
+详情：[skills/README.md](skills/README.md)
 
 ---
 
 ## Why zspace-cli?
 
-ZSpace (极空间) is a popular NAS brand in China, but it lacks official CLI tools or developer APIs.
+ZSpace (极空间) has no official CLI or public developer API.
 
-**zspace-cli** reverse-engineered the internal API used by the ZSpace desktop client and wraps it into:
+**zspace-cli** reverse-engineers the desktop client API and ships three layers:
 
-- **`zs` CLI** — 10 commands covering all file operations, powered by [Rich](https://github.com/Textualize/rich) for beautiful output
-- **Python SDK** — `ZSpaceClient` with a clean, typed interface for automation scripts
-- **MCP Server** — one-line config to add ZSpace file management to Claude, Cursor, or any MCP-compatible AI agent
-
-### Zero Configuration
-
-Just install and run. zspace-cli reads auth tokens directly from your running ZSpace desktop client — no passwords, no SSH keys, no port forwarding.
+| Layer | What | Who |
+|-------|------|-----|
+| **Skill** | Copy-paste Agent workflows | Fastest to try |
+| **MCP / CLI / SDK** | Atomic file ops | Automation & Agents |
+| **Zero-config auth** | Reads running macOS client token | No password in `.env` |
 
 ```
 pip install zspace-cli
-zs check   # ✓ Connected, 11.8 TB total, 1.2 TB free
-zs ls      # List your NAS files
+zs check   # ✓ Connected — token from ~/Library/.../zspace/vuex.json
+zs ls
+```
+
+Optional MCP:
+
+```bash
+pip install "zspace-cli[mcp]"
+```
+
+```json
+{
+  "mcpServers": {
+    "zspace": { "command": "zs-mcp", "args": [] }
+  }
+}
 ```
 
 ---
@@ -47,152 +84,66 @@ zs ls      # List your NAS files
 
 ---
 
-## Installation
+## CLI & SDK
 
 ```bash
-pip install zspace-cli
-```
-
-**Prerequisites:** ZSpace desktop client running on macOS (logged in).
-
-### With MCP Server support
-
-```bash
-pip install "zspace-cli[mcp]"
-```
-
----
-
-## Quick Start
-
-### CLI
-
-```bash
-# Check connection
-zs check
-
-# List files
-zs ls /sata11/my/data
-zs ls -l /sata11/my/data/影视    # detailed view
-
-# File operations
+zs ls -l /sata11/my/data/影视
 zs mkdir /sata11/my/data 新建文件夹
-zs rename /sata11/my/data/old_name new_name
+zs rename /sata11/my/data/old_name new_name   # new_name = basename only
 zs mv /sata11/my/data/file.mp4 /sata11/my/data/影视
-zs cp /sata11/my/data/important /sata11/my/data/backup
-zs rm /sata11/my/data/temp
-
-# Search & explore
 zs find "权力的游戏"
 zs tree /sata11/my/data -d 3
 ```
-
-### Python SDK
 
 ```python
 from zspace_cli import ZSpaceClient
 
 with ZSpaceClient() as zs:
-    # List files
     for f in zs.ls("/sata11/my/data"):
         print(f"{'📁' if f.is_dir else '📄'} {f.name}")
-
-    # Batch rename videos
-    for f in zs.ls("/sata11/my/data/影视"):
-        if f.name.startswith("[raw]"):
-            new_name = f.name.replace("[raw]", "").strip()
-            zs.rename(f.path, new_name)
-            print(f"Renamed: {new_name}")
-
-    # Organize files
-    zs.mkdir("/sata11/my/data", "已整理")
-    zs.move("/sata11/my/data/散文件.pdf", "/sata11/my/data/已整理")
 ```
 
-### MCP Server (for AI Agents)
-
-Add to your Claude Desktop / Cursor MCP config:
-
-```json
-{
-  "mcpServers": {
-    "zspace": {
-      "command": "zs-mcp",
-      "args": []
-    }
-  }
-}
-```
-
-Then ask your AI: "帮我把 NAS 上影视文件夹里的视频按年份整理一下"
+**Prerequisite:** ZSpace desktop client running on macOS (logged in).
 
 ---
 
 ## How It Works
 
 ```
-┌─────────────┐      ┌──────────────────┐      ┌──────────┐
-│  zs CLI     │      │  ZSpace Desktop  │      │  ZSpace  │
-│  Python SDK ├─────►│  Client (proxy)  ├─────►│  NAS     │
-│  MCP Server │ HTTP │  127.0.0.1:13579 │ P2P  │  Device  │
-└─────────────┘      └──────────────────┘      └──────────┘
+Skill / zs / SDK / MCP  →  127.0.0.1:13579 (desktop client proxy)  →  NAS
 ```
 
-The ZSpace desktop client maintains an encrypted tunnel to your NAS and exposes a local HTTP proxy. zspace-cli communicates with this proxy using the same API the official web UI uses.
-
-**No direct network access to the NAS is needed** — works even when your NAS is behind NAT or on a different network.
+No direct NAS reachability required — works behind NAT as long as the desktop client is online.
 
 ---
 
 ## API Reference
 
-All operations go through the ZSpace internal API at `127.0.0.1:13579`.
+| Endpoint | Key Parameters |
+|----------|----------------|
+| `/v2/file/list` | `path`, `show_hidden` |
+| `/v2/file/info` | `path` |
+| `/v2/file/modify` | `path`, `newname` |
+| `/v2/file/newdir` | `parent`, `name`, `rename=0` |
+| `/v2/file/move` / `copy` | `paths[]`, `to` |
+| `/v2/file/remove` | `paths[]` |
 
-| Endpoint | Method | Key Parameters |
-|----------|--------|---------------|
-| `/v2/file/list` | POST | `path`, `show_hidden` |
-| `/v2/file/info` | POST | `path` |
-| `/v2/file/modify` | POST | `path`, `newname` |
-| `/v2/file/newdir` | POST | `parent` (not path!), `name`, `rename=0` |
-| `/v2/file/move` | POST | `paths[]` (array), `to` (not dest!) |
-| `/v2/file/copy` | POST | `paths[]` (array), `to` (not dest!) |
-| `/v2/file/remove` | POST | `paths[]` (array) |
-
-> **Key discovery:** The parameter names are non-standard — `newdir` uses `parent` instead of `path`, and `move`/`copy` use `to` instead of `dest`. These were found by reverse-engineering the ZSpace web UI.
-
----
-
-## Skills
-
-### Media Manager
-
-A [Cursor AI Skill](https://docs.cursor.com/features/skills) for organizing movies and TV series on your ZSpace NAS. See [`skills/media-manager/`](skills/media-manager/) for details.
-
-Naming conventions and general methodology live in the standalone **[media-naming-guide](https://github.com/skyzhao1223/media-naming-guide)** (works with any NAS / Plex / Emby / Jellyfin). This skill adds ZSpace API-specific logic: pagination, rename/move, and content verification.
-
-| Repo | Role |
-|------|------|
-| **[media-naming-guide](https://github.com/skyzhao1223/media-naming-guide)** | Naming conventions — storage-agnostic |
-| **zspace-cli** (this repo) | ZSpace file ops + media-manager skill |
+Parameter names are non-standard (`parent` / `to` not `path` / `dest`) — documented after reverse-engineering the web UI.
 
 ---
 
 ## Roadmap
 
-- [ ] File upload/download support
-- [ ] Linux client support
-- [ ] Windows client support
-- [ ] Docker image for headless deployment
-- [ ] Batch operations with glob patterns
-- [ ] File watching / sync triggers
+- [ ] File upload/download
+- [ ] Linux / Windows client auth
+- [ ] Docker headless option
+- [ ] Batch glob helpers
 
 ---
 
 ## Contributing
 
-Contributions are welcome! Please open an issue first to discuss what you'd like to change.
-
----
+Open an issue first to discuss changes. PRs welcome.
 
 ## License
 
@@ -200,80 +151,41 @@ MIT
 
 ---
 
-<details>
-<summary><h2>中文说明</h2></summary>
+<a id="中文说明"></a>
 
-## 功能特性
+## 中文说明
 
-**zspace-cli** 是极空间 NAS 的命令行工具、Python SDK 和 MCP Server。
-
-通过逆向工程极空间桌面客户端的内部 API，实现了**完整的文件管理功能**——无需 SSH，无需 WebDAV，零配置即可使用。
+**定位**：Skill 负责让人「愿意试」；`zspace-cli` 零配置鉴权是护城河；CLI / SDK / MCP 负责留下重度用户。
 
 ### 安装
 
 ```bash
-pip install zspace-cli
+pip install zspace-cli          # 底座
+pip install "zspace-cli[mcp]"   # 可选 MCP
+zs check
 ```
 
-**前提条件：** macOS 上已安装并登录极空间桌面客户端。
+前提：macOS 极空间桌面客户端已登录。
 
-### 使用方法
+### 复制 Skill
 
 ```bash
-# 检查连接
-zs check
-
-# 文件操作
-zs ls                             # 列出目录
-zs ls -l /sata11/my/data/影视     # 详细模式
-zs info /sata11/my/data/影视      # 查看详情
-zs mkdir /sata11/my/data 新文件夹  # 创建目录
-zs rename /path/old new_name       # 重命名
-zs mv /path/src /path/dest         # 移动
-zs cp /path/src /path/dest         # 复制
-zs rm /path/to/delete              # 删除
-zs find "关键词"                    # 搜索
-zs tree /sata11/my/data -d 3       # 树形视图
+cp -r skills/zspace-nas ~/your-project/.cursor/skills/
+cp -r skills/media-manager ~/your-project/.cursor/skills/   # 影视整理
 ```
 
-### MCP Server 配置（AI 智能体）
+对 Agent 说「列出 NAS 文件」「扫一下影视命名问题」即可。说明见 [skills/README.md](skills/README.md)。
 
-在 Claude Desktop 或 Cursor 的 MCP 配置中添加：
+### CLI 速查
 
-```json
-{
-  "mcpServers": {
-    "zspace": {
-      "command": "zs-mcp",
-      "args": []
-    }
-  }
-}
+```bash
+zs ls /sata11/my/data/影视
+zs rename /path/old new_name    # 第二参数纯文件名
+zs mv /path/src /path/dest
+zs find "关键词"
+zs tree /sata11/my/data -d 3
 ```
 
-配置完成后，你可以用自然语言让 AI 管理你的 NAS 文件：
-- "帮我把影视文件夹里的电影按年份分类"
-- "查找所有大于 10GB 的文件"
-- "把百度网盘文件夹里的文档移到文档同步文件夹"
+### 和账号密码方案
 
-### Cursor Skill: 影视文件管理
-
-内置 [Cursor AI Skill](https://docs.cursor.com/features/skills)，可以让 AI 帮你整理 NAS 上的影视资源。详见 [`skills/media-manager/`](skills/media-manager/)。
-
-命名规范和通用方法论见独立项目 **[media-naming-guide](https://github.com/skyzhao1223/media-naming-guide)**（适用任意 NAS / Plex / Emby / Jellyfin）。本仓库的 skill 负责极空间 API 相关实现（分页、重命名、内容验证）。
-
-| 仓库 | 定位 |
-|------|------|
-| **[media-naming-guide](https://github.com/skyzhao1223/media-naming-guide)** | 通用命名规范，不绑存储 |
-| **zspace-cli**（本仓库） | 极空间文件操作 + 影视整理 skill |
-
-### 工作原理
-
-极空间桌面客户端在本机 `127.0.0.1:13579` 建立了到 NAS 的加密代理。zspace-cli 通过这个代理调用和官方 Web UI 完全相同的 API，因此：
-
-- 不需要 NAS 在局域网内
-- 不需要配置 DDNS 或端口转发
-- 不需要开启 SSH
-- 只要桌面客户端在运行，就能操作
-
-</details>
+本仓库主打**读桌面客户端 token**。若你需要服务器上填账号密码直连，可看社区其他 MCP 项目；两者场景不同，可并存。

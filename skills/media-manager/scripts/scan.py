@@ -268,8 +268,19 @@ def validate(item, root):
 # ── 主程序 ────────────────────────────────────────────────
 
 def main():
-    root = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_ROOT
-    output_json = '--json' in sys.argv
+    import argparse
+
+    parser = argparse.ArgumentParser(description="影视目录命名正向校验（极空间）")
+    parser.add_argument(
+        "root",
+        nargs="?",
+        default=DEFAULT_ROOT,
+        help=f"扫描根目录（默认 {DEFAULT_ROOT}）",
+    )
+    parser.add_argument("--json", action="store_true", help="stdout 输出 JSON")
+    args = parser.parse_args()
+    root = args.root
+    output_json = args.json
 
     with ZSpaceClient() as c:
         print(f'正在扫描 {root} ...\n', file=sys.stderr)

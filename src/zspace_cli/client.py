@@ -60,10 +60,13 @@ class ZSpaceClient:
     ):
         self.base_url = base_url.rstrip("/")
         self._creds = credentials or load_credentials(config_dir)
+        # trust_env=False: macOS system HTTP proxy (e.g. Clash :7897) must not
+        # intercept 127.0.0.1:13579, or all API calls return empty 502.
         self._http = httpx.Client(
             base_url=self.base_url,
             cookies={"token": self._creds.token},
             timeout=30,
+            trust_env=False,
         )
 
     def close(self) -> None:

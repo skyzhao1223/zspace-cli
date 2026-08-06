@@ -19,3 +19,5 @@ htmlcov/
 .coverage
 *.log
 .DS_Store
+.playwright-mcp/
+zspace_skill/

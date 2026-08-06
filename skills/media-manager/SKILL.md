@@ -2,23 +2,23 @@
 name: zspace-media-manager
 description: >-
   Organize movies and TV series on ZSpace (极空间) NAS using zspace-cli.
-  Naming conventions, validation regex, and best practices are defined in the
-  media-naming-guide skill — this skill handles ZSpace-specific API operations.
-  Use when the user mentions 极空间影视整理, ZSpace media, NAS 影视管理, or zspace rename.
+  Naming conventions live in media-naming-guide; this skill handles ZSpace API ops.
+  Use when 极空间影视整理, 影视命名扫描, ZSpace media, NAS 影视管理, or zspace rename.
 ---
 
 # ZSpace 影视文件管理
 
-基于 `zspace-cli` 整理极空间 NAS 上的影视资源。
+基于 `zspace-cli`（零配置）整理极空间影视库。先扫描、出 `old→new` 预览，再执行 rename/move。
 
-> **命名规范和整理方法论**见通用 skill：[media-naming-guide](https://github.com/skyzhao1223/media-naming-guide)
->
-> 本 skill 只包含极空间 API 相关的实现细节。
+> **命名规范**见 [media-naming-guide](https://github.com/skyzhao1223/media-naming-guide)  
+> 本 skill 只含极空间 API 落地（分页、rename/move、踩坑）。
+
+**前置 skill**：通用文件操作用同仓库 [`zspace-nas`](../zspace-nas/)。
 
 ## Prerequisites
 
-- `zspace-cli` 已安装（`pip install zspace-cli`）
-- 极空间 macOS 桌面客户端已登录且运行中
+- `pip install zspace-cli` + `zs check` 通过
+- 极空间 macOS 桌面客户端已登录
 - Python 3.9+
 
 ## 工作流程
@@ -26,12 +26,9 @@ description: >-
 ### Step 1: 扫描
 
 ```bash
-python scripts/scan.py /sata11/my/data/影视
-```
-
-加 `--json` 输出 JSON 格式供脚本处理：
-```bash
-python scripts/scan.py --json > /tmp/issues.json
+# 在本 skill 目录下，或写绝对路径
+python skills/media-manager/scripts/scan.py /sata11/my/data/影视
+python skills/media-manager/scripts/scan.py --json /sata11/my/data/影视 > /tmp/issues.json
 ```
 
 ### Step 2: 修复
