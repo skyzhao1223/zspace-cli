@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -52,10 +51,37 @@ def load_credentials(config_dir: Path | str | None = None) -> Credentials:
 
 def check_client_running(base_url: str = "http://127.0.0.1:13579") -> bool:
     """Quick check if the ZSpace desktop client proxy is reachable."""
+    return client_status(base_url).ok
+
+
+@dataclass(frozen=True)
+class ClientStatus:
+    """Detailed status of the ZSpace desktop client proxy."""
+
+    ok: bool
+    reason: str = ""
+
+    def __str__(self) -> str:
+        return f"{'ok' if self.ok else 'not-ok'}: {self.reason}"
+
+
+def client_status(base_url: str = "http://127.0.0.1:13579") -> ClientStatus:
+    """Probe the local desktop client proxy and explain failures.
+
+    Distinguishes "client not running" (connection refused) from "port in
+    use by something else" (connection succeeded but not the ZSpace proxy).
+    """
     import httpx
 
     try:
         r = httpx.get(f"{base_url}/home/", timeout=3)
-        return r.status_code < 500
-    except (httpx.ConnectError, httpx.TimeoutException):
-        return False
+    except httpx.ConnectError:
+        return ClientStatus(
+            False,
+            f"无法连接 {base_url}（极空间桌面客户端可能未运行）",
+        )
+    except httpx.TimeoutException:
+        return ClientStatus(False, f"{base_url} 连接超时（客户端可能卡住）")
+    if r.status_code < 500:
+        return ClientStatus(True)
+    return ClientStatus(False, f"{base_url} 返回 HTTP {r.status_code}（端口可能被其他程序占用）")

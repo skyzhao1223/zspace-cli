@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import typer
+from rich import box
 from rich.console import Console
 from rich.table import Table
 from rich.tree import Tree
-from rich import box
 
 from zspace_cli.client import ZSpaceClient, ZSpaceError
 
@@ -49,8 +48,9 @@ def _size_str(size: int) -> str:
 def check():
     """检查极空间客户端连接状态"""
     with _client() as c:
-        if not c.is_connected():
-            console.print("[red]✗ 极空间客户端代理不可达[/red]")
+        status = c.client_status()
+        if not status.ok:
+            console.print(f"[red]✗[/red] {status.reason}")
             raise typer.Exit(1)
 
         console.print("[green]✓ 极空间客户端已连接[/green]")
@@ -203,7 +203,7 @@ def rm(
     with _client() as c:
         try:
             c.remove(path)
-            console.print(f"[green]✓[/green] 已删除")
+            console.print("[green]✓[/green] 已删除")
         except ZSpaceError as e:
             console.print(f"[red]✗[/red] {e}")
             raise typer.Exit(1)
@@ -265,6 +265,80 @@ def _build_rich_tree(parent: Tree, nodes: list[dict], depth: int) -> None:
             label = f"{node['name']}  [dim]{_size_str(node.get('size', 0))}[/dim]"
         branch = current_parent.add(label)
         stack.append((branch, d))
+
+
+@app.command()
+def up(
+    local: Path = typer.Argument(..., help="本地文件路径"),
+    remote_dir: str = typer.Argument(..., help="NAS 目标目录"),
+    name: str = typer.Option(None, "--name", "-n", help="上传后的文件名（默认用本地文件名）"),
+):
+    """上传本地文件到 NAS"""
+    with _client() as c:
+        try:
+            result = c.upload(local, remote_dir, new_name=name)
+            target = result.get("path", f"{remote_dir.rstrip('/')}/{local.name}")
+            console.print(f"[green]✓[/green] 已上传到 [bold]{target}[/bold]")
+        except ZSpaceError as e:
+            console.print(f"[red]✗[/red] {e}")
+            raise typer.Exit(1)
+        except FileNotFoundError as e:
+            console.print(f"[red]✗[/red] {e}")
+            raise typer.Exit(1)
+
+
+@app.command()
+def down(
+    remote_path: str = typer.Argument(..., help="NAS 文件路径"),
+    local_dir: Path = typer.Argument(".", help="本地保存目录"),
+):
+    """从 NAS 下载文件到本地"""
+    with _client() as c:
+        try:
+            out = c.download(remote_path, local_dir)
+            console.print(f"[green]✓[/green] 已下载到 [bold]{out}[/bold]")
+        except ZSpaceError as e:
+            console.print(f"[red]✗[/red] {e}")
+            raise typer.Exit(1)
+
+
+@app.command()
+def skill(
+    target_dir: Path = typer.Argument(
+        ...,
+        help="目标目录，如 ~/your-project/.cursor/skills 或 ~/your-project/skills",
+    ),
+):
+    """复制 Agent skills 到你的项目目录"""
+    import shutil
+
+    # 定位打包进 wheel 的 skills 数据目录
+    data_root = Path(__file__).resolve().parent / "skills"
+    if not data_root.is_dir():
+        console.print(
+            "[red]✗[/red] 未找到 skills 数据目录（请确认已通过 pip 安装 zspace-cli）"
+        )
+        raise typer.Exit(1)
+
+    target = target_dir.expanduser()
+    target.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for item in data_root.iterdir():
+        if item.name in ("__init__.py", "__pycache__"):
+            continue
+        dest = target / item.name
+        if item.is_dir():
+            shutil.copytree(
+                item,
+                dest,
+                dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+            )
+        else:
+            shutil.copy2(item, dest)
+        copied += 1
+    console.print(f"[green]✓[/green] 已复制 {copied} 个 skill 到 [bold]{target}[/bold]")
+    console.print("  对 Agent 说「列出 NAS 文件」即可使用。")
 
 
 if __name__ == "__main__":

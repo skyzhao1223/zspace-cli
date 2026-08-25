@@ -22,7 +22,10 @@ server = Server("zspace-nas")
 TOOLS = [
     Tool(
         name="zspace_check",
-        description="检查极空间 NAS 连接状态和存储信息 / Check ZSpace NAS connection status and storage info",
+        description=(
+            "检查极空间 NAS 连接状态和存储信息 / "
+            "Check ZSpace NAS connection status and storage info"
+        ),
         inputSchema={"type": "object", "properties": {}, "required": []},
     ),
     Tool(
@@ -159,6 +162,38 @@ TOOLS = [
             },
         },
     ),
+    Tool(
+        name="zspace_upload",
+        description="上传本地文件到 NAS / Upload a local file to the NAS",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "local_path": {"type": "string", "description": "本地文件路径"},
+                "remote_dir": {"type": "string", "description": "NAS 目标目录"},
+                "new_name": {
+                    "type": "string",
+                    "description": "目标文件名（可选，默认用本地文件名）",
+                },
+            },
+            "required": ["local_path", "remote_dir"],
+        },
+    ),
+    Tool(
+        name="zspace_download",
+        description="从 NAS 下载文件到本地 / Download a file from the NAS",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "remote_path": {"type": "string", "description": "NAS 文件路径"},
+                "local_dir": {
+                    "type": "string",
+                    "description": "本地保存目录（默认当前目录）",
+                    "default": ".",
+                },
+            },
+            "required": ["remote_path"],
+        },
+    ),
 ]
 
 
@@ -261,6 +296,21 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
                     max_depth=arguments.get("depth", 2),
                 )
                 return _ok(nodes)
+
+            elif name == "zspace_upload":
+                result = c.upload(
+                    arguments["local_path"],
+                    arguments["remote_dir"],
+                    new_name=arguments.get("new_name"),
+                )
+                return _ok(result)
+
+            elif name == "zspace_download":
+                out = c.download(
+                    arguments["remote_path"],
+                    arguments.get("local_dir", "."),
+                )
+                return _ok({"saved_to": str(out)})
 
             else:
                 return _err(ValueError(f"Unknown tool: {name}"))
