@@ -99,5 +99,5 @@ URL 末尾必须附加 `?&rnd={timestamp}_{random}&webagent=v2` 查询参数。
 
 - API 单次返回最多 50 条记录，大目录需分页（`start` + `limit` 参数）
 - 文件上传/下载未通过此 API 测试。大文件操作建议使用 Syncthing（端口 13581）
-- API 来源于逆向工程，无官方文档，可能随客户端版本更新而变化
+- API 来源于社区整理（非官方文档），可能随客户端版本更新而变化
 - `move`/`mkdir` 的参数名不同于直觉：用 `to`（非 `dest`）、`parent`（非 `path`）+ `rename=0`

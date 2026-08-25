@@ -78,6 +78,8 @@ ZSpace has no official CLI or public API. **zspace-cli** talks to the desktop cl
 Skill / zs / SDK / MCP  →  127.0.0.1:13579 (desktop client proxy)  →  NAS
 ```
 
+> **Disclaimer** — This is an **unofficial, community-maintained** project, not affiliated with or endorsed by ZSpace (极空间). It relies on the desktop client's local proxy interface, which is **not officially documented**. It only reads the login state of **your own** account on **your own** machine — it does not bypass authentication, crack encryption, or touch anyone else's data. Use at your own risk; make sure your use complies with the ZSpace user agreement and your local laws.
+
 ### MCP configuration (optional)
 
 ```json
@@ -104,7 +106,7 @@ Skill / zs / SDK / MCP  →  127.0.0.1:13579 (desktop client proxy)  →  NAS
 | `/v2/file/download` | GET `path`, `remote_port=8050` |
 | `/file_search/file_search` | `keyword` |
 
-> Parameter names are non-standard (`parent` / `to` instead of `path` / `dest`) — mapped after reverse-engineering the web UI.
+> Note: the interface parameter names are non-standard (`parent` / `to` instead of `path` / `dest`) — documented by the community from the desktop client's behavior.
 
 ---
 
