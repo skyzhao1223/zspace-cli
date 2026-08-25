@@ -9,7 +9,7 @@
 pip install zspace-cli
 zs check
 
-# 2. 复制 skill 到你的项目（zspace-nas 和 media-manager 会一起装上）
+# 2. 复制 skill 到你的项目
 zs skill ~/your-project/.cursor/skills/   # Cursor
 # 或
 zs skill ~/your-project/skills/           # Claude Code 等
@@ -18,14 +18,16 @@ zs skill ~/your-project/skills/           # Claude Code 等
 # 「列出我 NAS 上 /sata11/my/data 的文件」
 ```
 
-> 也可以直接从仓库源码复制 `skills/zspace-nas/`、`skills/media-manager/`（media-manager 依赖 [media-naming-guide](https://github.com/skyzhao1223/media-naming-guide) 的命名规范）。
+> 也可以直接从仓库源码复制 `skills/zspace-nas/`。
 
 ## Skill 清单
 
-| Skill | 目录 | 能做什么 |
+| Skill | 来源 | 能做什么 |
 |-------|------|----------|
-| **zspace-nas** | `skills/zspace-nas/` | 通用文件管理（列目录 / 重命名 / 移动 / …） |
-| **zspace-media-manager** | `skills/media-manager/` | 影视库命名扫描与整理 |
+| **zspace-nas** | 本仓库 `skills/zspace-nas/` | 通用文件管理（列目录 / 重命名 / 移动 / …） |
+| **zspace-media-manager** | [zspace-media-manager](https://github.com/skyzhao1223/zspace-media-manager) | 影视库命名扫描与整理 |
+
+影视整理是独立的 [zspace-media-manager](https://github.com/skyzhao1223/zspace-media-manager) 项目（依赖 [media-naming-guide](https://github.com/skyzhao1223/media-naming-guide) 的命名规范）。
 
 ## 可选：MCP
 

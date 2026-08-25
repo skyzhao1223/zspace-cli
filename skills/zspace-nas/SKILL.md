@@ -91,7 +91,7 @@ pip install "zspace-cli[mcp]"
 
 ## 影视整理
 
-专用工作流见同仓库 skill：**zspace-media-manager**（`skills/media-manager/`）  
+专用工作流见独立 skill：**zspace-media-manager**（https://github.com/skyzhao1223/zspace-media-manager）  
 通用命名规范：[media-naming-guide](https://github.com/skyzhao1223/media-naming-guide)
 
 ## 参考
