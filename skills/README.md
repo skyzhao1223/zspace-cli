@@ -25,9 +25,9 @@ zs skill ~/your-project/skills/           # Claude Code 等
 | Skill | 来源 | 能做什么 |
 |-------|------|----------|
 | **zspace-nas** | 本仓库 `skills/zspace-nas/` | 通用文件管理（列目录 / 重命名 / 移动 / …） |
-| **zspace-media-manager** | [zspace-media-manager](https://github.com/skyzhao1223/zspace-media-manager) | 影视库命名扫描与整理 |
+| **media-manager-skill** | [media-manager-skill](https://github.com/skyzhao1223/media-manager-skill) | 影视库命名扫描与整理 |
 
-影视整理是独立的 [zspace-media-manager](https://github.com/skyzhao1223/zspace-media-manager) 项目（依赖 [media-naming-guide](https://github.com/skyzhao1223/media-naming-guide) 的命名规范）。
+影视整理是独立的 [media-manager-skill](https://github.com/skyzhao1223/media-manager-skill) 项目（依赖 [media-naming-guide](https://github.com/skyzhao1223/media-naming-guide) 的命名规范）。
 
 ## 可选：MCP
 
