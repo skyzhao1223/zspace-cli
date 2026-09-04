@@ -32,17 +32,4 @@ jobs:
         run: |
           printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized"}\n{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n' \
             | docker run --rm -i zspace-cli 2>/dev/null \
-            | python3 -c "
-import sys, json
-for line in sys.stdin:
-    line = line.strip()
-    if not line: continue
-    d = json.loads(line)
-    if d.get('id') == 1:
-        assert 'serverInfo' in d['result'], d
-        print('initialize OK:', d['result']['serverInfo'])
-    if d.get('id') == 2:
-        names = [t['name'] for t in d['result']['tools']]
-        assert 'zspace_ls' in names, names
-        print('tools/list OK:', len(names), 'tools')
-"
+            | python3 scripts/mcp_smoke.py

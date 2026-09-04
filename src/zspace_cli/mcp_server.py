@@ -8,6 +8,7 @@ Usage:
 
 from __future__ import annotations
 
+import importlib.metadata as _md
 import json
 from typing import Any
 
@@ -17,7 +18,9 @@ from mcp.types import TextContent, Tool
 
 from zspace_cli.client import ZSpaceClient, ZSpaceError
 
-server = Server("zspace-nas")
+_VERSION = _md.version("zspace-cli")
+
+server = Server("zspace-nas", version=_VERSION)
 
 TOOLS = [
     Tool(
