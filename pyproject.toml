@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zspace-cli"
-version = "0.1.0"
+version = "0.1.1"
 description = "Agent Skill + zero-config CLI/SDK/MCP for ZSpace (极空间) NAS — no password, no SSH"
 readme = "README.md"
 license = "MIT"
@@ -35,7 +35,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.0"]
+mcp = ["mcp>=2.0; python_version >= '3.10'"]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",

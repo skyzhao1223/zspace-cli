@@ -9,330 +9,161 @@ Usage:
 from __future__ import annotations
 
 import importlib.metadata as _md
-import json
 from typing import Any
 
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
+from mcp.server import MCPServer
 
 from zspace_cli.client import ZSpaceClient, ZSpaceError
 
-_VERSION = _md.version("zspace-cli")
+_VENDOR_VERSION = _md.version("zspace-cli")
 
-server = Server("zspace-nas", version=_VERSION)
-
-TOOLS = [
-    Tool(
-        name="zspace_check",
-        description=(
-            "检查极空间 NAS 连接状态和存储信息 / "
-            "Check ZSpace NAS connection status and storage info"
-        ),
-        inputSchema={"type": "object", "properties": {}, "required": []},
-    ),
-    Tool(
-        name="zspace_ls",
-        description="列出极空间 NAS 目录内容 / List directory contents on ZSpace NAS",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "目录路径，如 /sata11/my/data",
-                    "default": "/sata11/my/data",
-                },
-                "show_hidden": {"type": "boolean", "default": False},
-            },
-        },
-    ),
-    Tool(
-        name="zspace_info",
-        description="查看文件或目录详细信息 / Get detailed file/directory info",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "文件或目录路径"},
-            },
-            "required": ["path"],
-        },
-    ),
-    Tool(
-        name="zspace_rename",
-        description="重命名文件或目录 / Rename a file or directory",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "文件/目录路径"},
-                "new_name": {"type": "string", "description": "新名称"},
-            },
-            "required": ["path", "new_name"],
-        },
-    ),
-    Tool(
-        name="zspace_mkdir",
-        description="在极空间 NAS 上创建新目录 / Create a new directory",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "parent": {"type": "string", "description": "父目录路径"},
-                "name": {"type": "string", "description": "新目录名"},
-            },
-            "required": ["parent", "name"],
-        },
-    ),
-    Tool(
-        name="zspace_move",
-        description="移动文件或目录 / Move files or directories",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "paths": {
-                    "oneOf": [
-                        {"type": "string"},
-                        {"type": "array", "items": {"type": "string"}},
-                    ],
-                    "description": "源路径（单个字符串或数组）",
-                },
-                "to": {"type": "string", "description": "目标目录"},
-            },
-            "required": ["paths", "to"],
-        },
-    ),
-    Tool(
-        name="zspace_copy",
-        description="复制文件或目录 / Copy files or directories",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "paths": {
-                    "oneOf": [
-                        {"type": "string"},
-                        {"type": "array", "items": {"type": "string"}},
-                    ],
-                    "description": "源路径（单个字符串或数组）",
-                },
-                "to": {"type": "string", "description": "目标目录"},
-            },
-            "required": ["paths", "to"],
-        },
-    ),
-    Tool(
-        name="zspace_remove",
-        description="删除文件或目录 / Delete files or directories",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "paths": {
-                    "oneOf": [
-                        {"type": "string"},
-                        {"type": "array", "items": {"type": "string"}},
-                    ],
-                    "description": "要删除的路径（单个字符串或数组）",
-                },
-            },
-            "required": ["paths"],
-        },
-    ),
-    Tool(
-        name="zspace_search",
-        description="按文件名搜索 / Search files by name",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "keyword": {"type": "string", "description": "搜索关键词"},
-                "path": {
-                    "type": "string",
-                    "description": "搜索目录",
-                    "default": "/sata11/my/data",
-                },
-            },
-            "required": ["keyword"],
-        },
-    ),
-    Tool(
-        name="zspace_tree",
-        description="树形展示目录结构 / Show directory tree",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "根目录",
-                    "default": "/sata11/my/data",
-                },
-                "depth": {"type": "integer", "default": 2, "description": "递归深度"},
-            },
-        },
-    ),
-    Tool(
-        name="zspace_upload",
-        description="上传本地文件到 NAS / Upload a local file to the NAS",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "local_path": {"type": "string", "description": "本地文件路径"},
-                "remote_dir": {"type": "string", "description": "NAS 目标目录"},
-                "new_name": {
-                    "type": "string",
-                    "description": "目标文件名（可选，默认用本地文件名）",
-                },
-            },
-            "required": ["local_path", "remote_dir"],
-        },
-    ),
-    Tool(
-        name="zspace_download",
-        description="从 NAS 下载文件到本地 / Download a file from the NAS",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "remote_path": {"type": "string", "description": "NAS 文件路径"},
-                "local_dir": {
-                    "type": "string",
-                    "description": "本地保存目录（默认当前目录）",
-                    "default": ".",
-                },
-            },
-            "required": ["remote_path"],
-        },
-    ),
-]
+server = MCPServer("zspace-nas", version=_VENDOR_VERSION)
 
 
-def _ok(data: Any) -> list[TextContent]:
-    return [TextContent(type="text", text=json.dumps(data, ensure_ascii=False, indent=2))]
+def _ok(data: Any) -> dict[str, Any]:
+    return {"result": data}
 
 
-def _err(e: Exception) -> list[TextContent]:
-    return [TextContent(type="text", text=f"Error: {e}")]
+def _err(e: Exception) -> dict[str, str]:
+    return {"error": str(e)}
 
 
-@server.list_tools()
-async def list_tools() -> list[Tool]:
-    return TOOLS
-
-
-@server.call_tool()
-async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-    try:
-        with ZSpaceClient() as c:
-            if name == "zspace_check":
-                connected = c.is_connected()
-                result: dict[str, Any] = {"connected": connected}
-                if connected:
-                    try:
-                        pool = c.pool_info()
-                        result["pools"] = [
-                            {
-                                "name": p["name"],
-                                "total_tb": round(p["total_size"] / (1024**4), 1),
-                                "free_tb": round(p["free_size"] / (1024**4), 1),
-                            }
-                            for p in pool["data"]["pool_list"]
-                        ]
-                    except ZSpaceError:
-                        pass
-                return _ok(result)
-
-            elif name == "zspace_ls":
-                entries = c.ls(
-                    arguments.get("path", "/sata11/my/data"),
-                    show_hidden=arguments.get("show_hidden", False),
-                )
-                return _ok([
+@server.tool()
+async def zspace_check() -> dict[str, Any]:
+    """检查极空间 NAS 连接状态和存储信息 / Check ZSpace NAS connection status and storage info"""
+    with ZSpaceClient() as c:
+        connected = c.is_connected()
+        result: dict[str, Any] = {"connected": connected}
+        if connected:
+            try:
+                pool = c.pool_info()
+                result["pools"] = [
                     {
-                        "name": e.name,
-                        "path": e.path,
-                        "is_dir": e.is_dir,
-                        "size": e.size,
+                        "name": p["name"],
+                        "total_tb": round(p["total_size"] / (1024**4), 1),
+                        "free_tb": round(p["free_size"] / (1024**4), 1),
                     }
-                    for e in entries
-                ])
-
-            elif name == "zspace_info":
-                data = c.info(arguments["path"])
-                return _ok(data)
-
-            elif name == "zspace_rename":
-                result = c.rename(arguments["path"], arguments["new_name"])
-                return _ok({"name": result.name, "path": result.path})
-
-            elif name == "zspace_mkdir":
-                result = c.mkdir(arguments["parent"], arguments["name"])
-                return _ok({"name": result.name, "path": result.path})
-
-            elif name == "zspace_move":
-                paths = arguments["paths"]
-                if isinstance(paths, str):
-                    paths = [paths]
-                c.move(paths, arguments["to"])
-                return _ok({"status": "moved", "paths": paths, "to": arguments["to"]})
-
-            elif name == "zspace_copy":
-                paths = arguments["paths"]
-                if isinstance(paths, str):
-                    paths = [paths]
-                c.copy(paths, arguments["to"])
-                return _ok({"status": "copied", "paths": paths, "to": arguments["to"]})
-
-            elif name == "zspace_remove":
-                paths = arguments["paths"]
-                if isinstance(paths, str):
-                    paths = [paths]
-                c.remove(paths)
-                return _ok({"status": "removed", "paths": paths})
-
-            elif name == "zspace_search":
-                results = c.search(
-                    arguments["keyword"],
-                    arguments.get("path", "/sata11/my/data"),
-                )
-                return _ok([
-                    {"name": e.name, "path": e.path, "is_dir": e.is_dir}
-                    for e in results
-                ])
-
-            elif name == "zspace_tree":
-                nodes = c.tree(
-                    arguments.get("path", "/sata11/my/data"),
-                    max_depth=arguments.get("depth", 2),
-                )
-                return _ok(nodes)
-
-            elif name == "zspace_upload":
-                result = c.upload(
-                    arguments["local_path"],
-                    arguments["remote_dir"],
-                    new_name=arguments.get("new_name"),
-                )
-                return _ok(result)
-
-            elif name == "zspace_download":
-                out = c.download(
-                    arguments["remote_path"],
-                    arguments.get("local_dir", "."),
-                )
-                return _ok({"saved_to": str(out)})
-
-            else:
-                return _err(ValueError(f"Unknown tool: {name}"))
-
-    except ZSpaceError as e:
-        return _err(e)
-    except Exception as e:
-        return _err(e)
+                    for p in pool["data"]["pool_list"]
+                ]
+            except ZSpaceError:
+                pass
+        return _ok(result)
 
 
-async def _async_main() -> None:
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
+@server.tool()
+async def zspace_ls(path: str = "/sata11/my/data", show_hidden: bool = False) -> dict[str, Any]:
+    """列出极空间 NAS 目录内容 / List directory contents on ZSpace NAS"""
+    with ZSpaceClient() as c:
+        entries = c.ls(path, show_hidden=show_hidden)
+        return _ok(
+            [
+                {
+                    "name": e.name,
+                    "path": e.path,
+                    "is_dir": e.is_dir,
+                    "size": e.size,
+                }
+                for e in entries
+            ]
+        )
+
+
+@server.tool()
+async def zspace_info(path: str) -> dict[str, Any]:
+    """查看文件或目录详细信息 / Get detailed file/directory info"""
+    with ZSpaceClient() as c:
+        return _ok(c.info(path))
+
+
+@server.tool()
+async def zspace_rename(path: str, new_name: str) -> dict[str, Any]:
+    """重命名文件或目录 / Rename a file or directory"""
+    with ZSpaceClient() as c:
+        result = c.rename(path, new_name)
+        return _ok({"name": result.name, "path": result.path})
+
+
+@server.tool()
+async def zspace_mkdir(parent: str, name: str) -> dict[str, Any]:
+    """在极空间 NAS 上创建新目录 / Create a new directory"""
+    with ZSpaceClient() as c:
+        result = c.mkdir(parent, name)
+        return _ok({"name": result.name, "path": result.path})
+
+
+@server.tool()
+async def zspace_move(paths: str | list[str], to: str) -> dict[str, Any]:
+    """移动文件或目录 / Move files or directories"""
+    with ZSpaceClient() as c:
+        if isinstance(paths, str):
+            paths = [paths]
+        c.move(paths, to)
+        return _ok({"status": "moved", "paths": paths, "to": to})
+
+
+@server.tool()
+async def zspace_copy(paths: str | list[str], to: str) -> dict[str, Any]:
+    """复制文件或目录 / Copy files or directories"""
+    with ZSpaceClient() as c:
+        if isinstance(paths, str):
+            paths = [paths]
+        c.copy(paths, to)
+        return _ok({"status": "copied", "paths": paths, "to": to})
+
+
+@server.tool()
+async def zspace_remove(paths: str | list[str]) -> dict[str, Any]:
+    """删除文件或目录 / Delete files or directories"""
+    with ZSpaceClient() as c:
+        if isinstance(paths, str):
+            paths = [paths]
+        c.remove(paths)
+        return _ok({"status": "removed", "paths": paths})
+
+
+@server.tool()
+async def zspace_search(keyword: str, path: str = "/sata11/my/data") -> dict[str, Any]:
+    """按文件名搜索 / Search files by name"""
+    with ZSpaceClient() as c:
+        results = c.search(keyword, path)
+        return _ok(
+            [
+                {"name": e.name, "path": e.path, "is_dir": e.is_dir}
+                for e in results
+            ]
+        )
+
+
+@server.tool()
+async def zspace_tree(path: str = "/sata11/my/data", depth: int = 2) -> dict[str, Any]:
+    """树形展示目录结构 / Show directory tree"""
+    with ZSpaceClient() as c:
+        return _ok(c.tree(path, max_depth=depth))
+
+
+@server.tool()
+async def zspace_upload(
+    local_path: str, remote_dir: str, new_name: str | None = None
+) -> dict[str, Any]:
+    """上传本地文件到 NAS / Upload a local file to the NAS"""
+    with ZSpaceClient() as c:
+        result = c.upload(local_path, remote_dir, new_name=new_name)
+        return _ok(result)
+
+
+@server.tool()
+async def zspace_download(remote_path: str, local_dir: str = ".") -> dict[str, Any]:
+    """从 NAS 下载文件到本地 / Download a file from the NAS"""
+    with ZSpaceClient() as c:
+        out = c.download(remote_path, local_dir)
+        return _ok({"saved_to": str(out)})
 
 
 def main() -> None:
     """Entry point for the MCP server (used by zs-mcp console script)."""
     import asyncio
-    asyncio.run(_async_main())
+
+    asyncio.run(server.run_stdio_async())
 
 
 if __name__ == "__main__":

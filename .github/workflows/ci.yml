@@ -34,8 +34,10 @@ jobs:
       - name: MCP handshake (initialize + tools/list)
         run: |
           set +e
-          printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized"}\n{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n' \
-            | docker run --rm -i zspace-cli >/tmp/mcp-out.txt 2>/tmp/mcp-err.txt
+          {
+            printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized"}\n{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n'
+            sleep 1
+          } | docker run --rm -i zspace-cli >/tmp/mcp-out.txt 2>/tmp/mcp-err.txt
           rc=$?
           echo "exit=$rc"
           echo "--- stderr ---"
