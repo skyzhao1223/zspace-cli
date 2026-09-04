@@ -17,7 +17,10 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+      - run: pip install -e ".[dev]"
+        if: matrix.python-version == '3.9'
       - run: pip install -e ".[mcp,dev]"
+        if: matrix.python-version != '3.9'
       - run: ruff check src tests
       - run: pytest -q
 
