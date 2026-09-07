@@ -1,5 +1,7 @@
 """Beautiful CLI for ZSpace NAS — powered by Typer + Rich."""
 
+# ruff: noqa: UP007, UP045 - typer resolves annotations at runtime; py3.9 needs Optional[]
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -74,7 +74,7 @@ select = ["E", "F", "I", "N", "W", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
 # typer must resolve annotations at runtime on py3.9, so keep Optional here.
-"src/zspace_cli/cli.py" = ["UP007"]
+"src/zspace_cli/cli.py" = ["UP007", "UP045"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
