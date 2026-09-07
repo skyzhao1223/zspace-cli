@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import typer
 from rich import box
@@ -57,7 +57,7 @@ def _client() -> ZSpaceClient:
             return ZSpaceClient(config_dir=_config_dir)
         return ZSpaceClient()
     except FileNotFoundError as e:
-        console.print(f"[red]![/red] {e}")
+        _print_error(e)
         raise typer.Exit(1)
     except Exception as e:
         console.print(f"[red]! 连接失败:[/red] {e}")
@@ -81,33 +81,62 @@ def _expand_glob(c: ZSpaceClient, arg: str) -> list[str]:
     return [arg]
 
 
+def _emit_json(data: Any) -> None:
+    import json
+
+    console.print(json.dumps(data, ensure_ascii=False, indent=2))
+
+
+def _print_error(e: Exception) -> None:
+    """Print an error, appending an actionable hint when the code is known."""
+    console.print(f"[red]![/red] {e}")
+    if isinstance(e, ZSpaceError):
+        hint = ZSpaceError.diagnose(e.code, e.msg)
+        if hint:
+            console.print(f"  [dim]提示: {hint}[/dim]")
+
+
 @app.command()
-def check():
+def check(json_output: bool = typer.Option(False, "--json", help="JSON 输出")):
     """检查极空间客户端连接状态"""
     with _client() as c:
         status = c.client_status()
         if not status.ok:
+            if json_output:
+                _emit_json({"ok": False, "reason": status.reason})
             console.print(f"[red]![/red] {status.reason}")
             raise typer.Exit(1)
 
-        console.print("[green]OK 极空间客户端已连接[/green]")
+        pools: list[dict] = []
+        if not json_output:
+            console.print("[green]OK 极空间客户端已连接[/green]")
         try:
             pool = c.pool_info()
             for p in pool["data"]["pool_list"]:
                 total = p["total_size"] / (1024**4)
                 free = p["free_size"] / (1024**4)
                 used_pct = (1 - free / total) * 100 if total else 0
-                console.print(
-                    f"  [bold]{p['name']}[/bold]: "
-                    f"{total:.1f} TB 总容量, {free:.1f} TB 可用 "
-                    f"([{'red' if used_pct > 80 else 'yellow' if used_pct > 60 else 'green'}]"
-                    f"{used_pct:.0f}% 已用[/])"
-                )
+                pools.append({
+                    "name": p["name"],
+                    "total_tb": round(total, 1),
+                    "free_tb": round(free, 1),
+                    "used_pct": round(used_pct),
+                })
+                if not json_output:
+                    console.print(
+                        f"  [bold]{p['name']}[/bold]: "
+                        f"{total:.1f} TB 总容量, {free:.1f} TB 可用 "
+                        f"([{'red' if used_pct > 80 else 'yellow' if used_pct > 60 else 'green'}]"
+                        f"{used_pct:.0f}% 已用[/])"
+                    )
         except ZSpaceError:
             pass
         except (KeyError, TypeError, ValueError):
             # pool API responded but in an unexpected shape — degrade gracefully
-            console.print("  [dim](存储池信息解析失败)[/dim]")
+            if not json_output:
+                console.print("  [dim](存储池信息解析失败)[/dim]")
+        if json_output:
+            _emit_json({"ok": True, "pools": pools})
 
 
 @app.command()
@@ -115,14 +144,21 @@ def ls(
     path: str = typer.Argument(DEFAULT_PATH, help="目录路径"),
     hidden: bool = typer.Option(False, "--hidden", "-a", help="显示隐藏文件"),
     long: bool = typer.Option(False, "--long", "-l", help="详细信息"),
+    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
 ):
     """列出目录内容"""
     with _client() as c:
         try:
             entries = c.ls(path, show_hidden=hidden)
         except ZSpaceError as e:
-            console.print(f"[red]![/red] {e}")
+            _print_error(e)
             raise typer.Exit(1)
+
+        if json_output:
+            _emit_json([{
+                "name": e.name, "path": e.path, "is_dir": e.is_dir, "size": e.size,
+            } for e in entries])
+            return
 
         if long:
             table = Table(box=box.SIMPLE, show_header=True, header_style="bold cyan")
@@ -146,14 +182,21 @@ def ls(
 
 
 @app.command()
-def info(path: str = typer.Argument(..., help="文件或目录路径")):
+def info(
+    path: str = typer.Argument(..., help="文件或目录路径"),
+    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
+):
     """查看文件/目录详细信息"""
     with _client() as c:
         try:
             data = c.info(path)
         except ZSpaceError as e:
-            console.print(f"[red]![/red] {e}")
+            _print_error(e)
             raise typer.Exit(1)
+
+        if json_output:
+            _emit_json(data)
+            return
 
         table = Table(box=box.ROUNDED, show_header=False, title=data.get("name", path))
         table.add_column("属性", style="bold")
@@ -180,7 +223,7 @@ def rename(
             result = c.rename(path, new_name)
             console.print(f"[green]OK[/green] 已重命名为 [bold]{result.name}[/bold]")
         except ZSpaceError as e:
-            console.print(f"[red]![/red] {e}")
+            _print_error(e)
             raise typer.Exit(1)
 
 
@@ -199,7 +242,7 @@ def mv(
             c.move(paths, dest)
             console.print(f"[green]OK[/green] 已移动 {len(paths)} 项到 [bold]{dest}[/bold]")
         except ZSpaceError as e:
-            console.print(f"[red]![/red] {e}")
+            _print_error(e)
             raise typer.Exit(1)
 
 
@@ -218,7 +261,7 @@ def cp(
             c.copy(paths, dest)
             console.print(f"[green]OK[/green] 已复制 {len(paths)} 项到 [bold]{dest}[/bold]")
         except ZSpaceError as e:
-            console.print(f"[red]![/red] {e}")
+            _print_error(e)
             raise typer.Exit(1)
 
 
@@ -233,7 +276,7 @@ def mkdir(
             result = c.mkdir(parent, name)
             console.print(f"[green]OK[/green] 已创建 [bold]{result.path}[/bold]")
         except ZSpaceError as e:
-            console.print(f"[red]![/red] {e}")
+            _print_error(e)
             raise typer.Exit(1)
 
 
@@ -256,7 +299,7 @@ def rm(
             c.remove(paths)
             console.print(f"[green]OK[/green] 已删除 {len(paths)} 项")
         except ZSpaceError as e:
-            console.print(f"[red]![/red] {e}")
+            _print_error(e)
             raise typer.Exit(1)
 
 
@@ -264,14 +307,21 @@ def rm(
 def find(
     keyword: str = typer.Argument(..., help="搜索关键词"),
     path: str = typer.Argument(DEFAULT_PATH, help="搜索目录"),
+    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
 ):
     """搜索文件名"""
     with _client() as c:
         try:
             results = c.search(keyword, path)
         except ZSpaceError as e:
-            console.print(f"[red]![/red] {e}")
+            _print_error(e)
             raise typer.Exit(1)
+
+        if json_output:
+            _emit_json([{
+                "name": e.name, "path": e.path, "is_dir": e.is_dir, "size": e.size,
+            } for e in results])
+            return
 
         if not results:
             console.print(f"[yellow]未找到匹配 '{keyword}' 的文件[/yellow]")
@@ -287,14 +337,19 @@ def find(
 def tree(
     path: str = typer.Argument(DEFAULT_PATH, help="根目录"),
     depth: int = typer.Option(2, "--depth", "-d", help="递归深度"),
+    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
 ):
     """树形显示目录结构"""
     with _client() as c:
         try:
             nodes = c.tree(path, max_depth=depth)
         except ZSpaceError as e:
-            console.print(f"[red]![/red] {e}")
+            _print_error(e)
             raise typer.Exit(1)
+
+        if json_output:
+            _emit_json(nodes)
+            return
 
         root_name = path.rsplit("/", 1)[-1] or path
         rich_tree = Tree(f"[bold]{root_name}/[/bold]")
@@ -357,10 +412,10 @@ def up(
                 target = result.get("path", f"{remote_dir.rstrip('/')}/{local.name}")
                 console.print(f"[green]OK[/green] 已上传到 [bold]{target}[/bold]")
             except ZSpaceError as e:
-                console.print(f"[red]![/red] {e}")
+                _print_error(e)
                 raise typer.Exit(1)
             except FileNotFoundError as e:
-                console.print(f"[red]![/red] {e}")
+                _print_error(e)
                 raise typer.Exit(1)
 
 
@@ -390,7 +445,7 @@ def down(
                     )
                     console.print(f"[green]OK[/green] 已下载到 [bold]{out}[/bold]")
             except ZSpaceError as e:
-                console.print(f"[red]![/red] {e}")
+                _print_error(e)
                 raise typer.Exit(1)
 
 

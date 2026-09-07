@@ -534,3 +534,23 @@ def test_download_progress_without_content_length(client, tmp_path):
     seen = []
     client.download("/dst/a.txt", tmp_path, progress=lambda d, t: seen.append((d, t)))
     assert seen[-1] == (3, 0)
+
+
+# --- ZSpaceError.diagnose ---
+
+
+def test_diagnose_permission():
+    assert "权限" in ZSpaceError.diagnose("403", "无权限")
+    assert "权限" in ZSpaceError.diagnose("401", "permission denied")
+
+
+def test_diagnose_not_found():
+    assert "路径不存在" in ZSpaceError.diagnose("404", "not found")
+
+
+def test_diagnose_exists():
+    assert "已存在" in ZSpaceError.diagnose("500", "文件已存在")
+
+
+def test_diagnose_unknown_code():
+    assert ZSpaceError.diagnose("500", "something weird") is None

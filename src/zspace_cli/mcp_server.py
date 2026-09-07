@@ -76,6 +76,30 @@ async def zspace_check() -> dict[str, Any]:
 
 @_safe_tool
 @server.tool()
+async def zspace_pool_info() -> dict[str, Any]:
+    """获取存储池信息 / Get storage pool information"""
+    with ZSpaceClient() as c:
+        pool = c.pool_info()
+        return _ok([
+            {
+                "name": p["name"],
+                "total_tb": round(p["total_size"] / (1024**4), 1),
+                "free_tb": round(p["free_size"] / (1024**4), 1),
+            }
+            for p in pool["data"]["pool_list"]
+        ])
+
+
+@_safe_tool
+@server.tool()
+async def zspace_disk_stats() -> dict[str, Any]:
+    """获取磁盘统计信息 / Get disk statistics"""
+    with ZSpaceClient() as c:
+        return _ok(c.disk_stats())
+
+
+@_safe_tool
+@server.tool()
 async def zspace_ls(path: str = "/sata11/my/data", show_hidden: bool = False) -> dict[str, Any]:
     """列出极空间 NAS 目录内容 / List directory contents on ZSpace NAS"""
     with ZSpaceClient() as c:

@@ -394,3 +394,53 @@ def test_cli_config_dir_missing_shows_tried_paths(tmp_path):
     assert r.exit_code == 1
     assert "配置未找到" in buf.getvalue()
     assert str(nope) in buf.getvalue()
+
+
+def test_cli_ls_json():
+    import json as _json
+
+    r, out, _ = _run_cmd("ls", "/d", "--json")
+    assert r.exit_code == 0
+    data = _json.loads(out)
+    assert data[0]["name"] == "a.txt"
+    assert data[0]["is_dir"] is False
+
+
+def test_cli_check_json_ok():
+    import json as _json
+
+    pool = {"data": {"pool_list": [
+        {"name": "池1", "total_size": 8 * 1024**4, "free_size": 4 * 1024**4}
+    ]}}
+    r, out, _ = _run_cmd("check", "--json", client_overrides={"pool_info.return_value": pool})
+    assert r.exit_code == 0
+    data = _json.loads(out)
+    assert data["ok"] is True
+    assert data["pools"][0]["name"] == "池1"
+
+
+def test_cli_find_json():
+    import json as _json
+
+    r, out, _ = _run_cmd("find", "hit", "--json")
+    assert r.exit_code == 0
+    data = _json.loads(out)
+    assert data[0]["name"] == "hit.mkv"
+
+
+def test_cli_tree_json():
+    import json as _json
+
+    r, out, _ = _run_cmd("tree", "/d", "--json")
+    assert r.exit_code == 0
+    data = _json.loads(out)
+    assert data[0]["name"] == "d"
+
+
+def test_cli_info_json():
+    import json as _json
+
+    r, out, _ = _run_cmd("info", "/d/a.txt", "--json")
+    assert r.exit_code == 0
+    data = _json.loads(out)
+    assert data["path"] == "/d/a.txt"

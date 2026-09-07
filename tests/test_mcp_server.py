@@ -230,3 +230,34 @@ def test_zspace_info_unexpected_exception_returns_error_struct():
     with patch("zspace_cli.mcp_server.ZSpaceClient", return_value=c):
         r = _run(m.zspace_info("/d/a"))
     assert r == {"error": "boom"}
+
+
+def test_zspace_pool_info():
+    from zspace_cli import mcp_server as m
+
+    c = _mock_client()
+    with patch("zspace_cli.mcp_server.ZSpaceClient", return_value=c):
+        r = _run(m.zspace_pool_info())
+    assert r["result"][0]["name"] == "池1"
+    assert r["result"][0]["total_tb"] == 8.0
+
+
+def test_zspace_disk_stats():
+    from zspace_cli import mcp_server as m
+
+    c = _mock_client()
+    c.disk_stats.return_value = {"data": {"disk_list": [{"name": "sda"}]}}
+    with patch("zspace_cli.mcp_server.ZSpaceClient", return_value=c):
+        r = _run(m.zspace_disk_stats())
+    assert r["result"]["data"]["disk_list"][0]["name"] == "sda"
+
+
+def test_zspace_pool_info_error():
+    from zspace_cli import mcp_server as m
+    from zspace_cli.client import ZSpaceError
+
+    c = _mock_client()
+    c.pool_info.side_effect = ZSpaceError("500", "pool broke")
+    with patch("zspace_cli.mcp_server.ZSpaceClient", return_value=c):
+        r = _run(m.zspace_pool_info())
+    assert "error" in r

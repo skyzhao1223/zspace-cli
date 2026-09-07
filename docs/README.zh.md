@@ -81,6 +81,8 @@ zs skill ~/your-project/skills/           # Claude Code 等（可复制到多个
 | `zs skill <dir>` | 把 Agent skills 复制到项目目录 |
 | `zs --config-dir <dir>` | 指定非默认 `vuex.json` 位置（或环境变量 `ZS_CONFIG_DIR`） |
 
+`zs check`、`zs ls`、`zs info`、`zs find`、`zs tree` 支持 `--json` 机器可读输出；`zs mv`/`zs cp`/`zs rm`/`zs down` 的源路径支持 `* ?` glob 通配。
+
 > `ls` 自动分页（NAS 单次最多 50 条，会循环拉全）；`find` 走 NAS 全文索引，跨目录搜索。上传/下载在真实终端显示进度条，且为流式传输（不整文件读入内存）。
 
 ---
@@ -219,6 +221,12 @@ zspace-cli/
 ├── tests/             # pytest（CLI + SDK + MCP + auth）
 └── promo/             # 发布/推广材料（submodule）
 ```
+
+---
+
+## 集成
+
+与 [Jellyfin / Emby / MoviePilot / MCP 客户端 / Docker](integrations.md) 及 [media-manager-skill](https://github.com/skyzhao1223/media-manager-skill) 配合使用媒体库工具。
 
 ---
 

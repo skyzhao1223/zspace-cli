@@ -88,6 +88,22 @@ class ZSpaceError(Exception):
         self.msg = msg
         super().__init__(f"[{code}] {msg}")
 
+    @staticmethod
+    def diagnose(code: str, msg: str = "") -> str | None:
+        """Return an actionable hint for a known error code, or None."""
+        low = msg.lower()
+        if code in ("401", "403") or "无权限" in msg or "permission" in low:
+            return "没有权限 — 检查该账号对目标路径/文件的访问权限"
+        if code in ("404",) or "不存在" in msg or "not found" in low:
+            return "路径不存在 — 确认路径拼写（可用 zs ls 上级目录）"
+        if "已存在" in msg or "exists" in low:
+            return "目标已存在 — 换个文件名或用 zs rename"
+        if "参数" in msg or "invalid" in low:
+            return "参数不合法 — 检查路径/名称是否含非法字符"
+        if "busy" in low or "占用" in msg:
+            return "文件被占用 — 关闭占用它的程序后重试"
+        return None
+
 
 class ZSpaceClient:
     """High-level client for ZSpace NAS file operations.

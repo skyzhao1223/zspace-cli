@@ -70,6 +70,10 @@ with ZSpaceClient() as zs:
 | `zs skill <dir>` | Copy Agent skills into a project |
 | `zs --config-dir <dir>` | Point at a non-default `vuex.json` location (or `ZS_CONFIG_DIR`) |
 
+`zs check`, `zs ls`, `zs info`, `zs find`, `zs tree` accept `--json` for
+machine-readable output. `zs mv`/`zs cp`/`zs rm`/`zs down` accept `* ?` glob
+patterns on the source path.
+
 > `ls` pages through large directories automatically (the NAS API returns at most 50 entries per call). `find` uses the NAS full-text index, so it searches across directories. Upload/download show a progress bar on a real terminal and stream the file (no full-file buffering).
 
 ---
@@ -229,6 +233,12 @@ zspace-cli/
 ├── tests/             # pytest (CLI + SDK + MCP + auth)
 └── promo/             # launch/promo material (submodule)
 ```
+
+---
+
+## Integrations
+
+Pair zspace-cli with [Jellyfin / Emby / MoviePilot / MCP clients / Docker](docs/integrations.md) and [media-manager-skill](https://github.com/skyzhao1223/media-manager-skill) for media library tooling.
 
 ---
 
