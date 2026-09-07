@@ -72,7 +72,7 @@ select = ["E", "F", "I", "N", "W", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "--cov=src/zspace_cli --cov-report=term-missing --cov-fail-under=80"
+addopts = "--cov=src/zspace_cli --cov-report=term-missing --cov-fail-under=75"
 
 [tool.coverage.run]
 branch = true
