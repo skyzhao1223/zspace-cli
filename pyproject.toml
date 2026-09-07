@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zspace-cli"
-version = "0.1.2"
+version = "0.1.3"
 description = "Agent Skill + zero-config CLI/SDK/MCP for ZSpace (极空间) NAS — no password, no SSH"
 readme = "README.md"
 license = "MIT"
