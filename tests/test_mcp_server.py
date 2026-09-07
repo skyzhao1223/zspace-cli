@@ -1,10 +1,14 @@
 """Tests for zspace_cli.mcp_server — MCP tool functions with a mocked client."""
 
 import asyncio
-from unittest.mock import patch
+import pytest
 
-from zspace_cli.client import FileEntry
-from zspace_cli.mcp_server import _err, _ok
+pytest.importorskip("mcp", reason="mcp extra requires Python 3.10+")
+
+from unittest.mock import patch  # noqa: E402
+
+from zspace_cli.client import FileEntry  # noqa: E402
+from zspace_cli.mcp_server import _err, _ok  # noqa: E402
 
 
 def _mock_client(**overrides):
