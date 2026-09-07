@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 import typer
 from rich import box
@@ -36,7 +37,7 @@ _config_dir: str | None = None
 
 @app.callback()
 def _main(
-    config_dir: str | None = typer.Option(
+    config_dir: Optional[str] = typer.Option(  # noqa: UP007 - typer needs runtime type on py3.9
         None,
         "--config-dir",
         envvar=CONFIG_DIR_ENV,
