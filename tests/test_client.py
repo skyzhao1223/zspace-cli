@@ -291,6 +291,65 @@ def test_search_skips_bad_rows(client):
     assert res[0].name == "ok"
 
 
+# --- glob ---
+
+
+def _glob_post(pages):
+    def fake_post(*args, **kwargs):
+        data = kwargs.get("data", {})
+        return _resp_mock("200", pages.get(data.get("path", ""), {"list": []}))
+
+    return fake_post
+
+
+def test_glob_double_star_matches_across_dirs(client):
+    pages = {
+        "/d": {
+            "list": [
+                _entry("movies", "/d/movies", is_dir="1"),
+                _entry("a.mp4", "/d/a.mp4"),
+            ]
+        },
+        "/d/movies": {
+            "list": [_entry("b.mp4", "/d/movies/b.mp4"), _entry("c.txt", "/d/movies/c.txt")]
+        },
+    }
+    client._http.post.side_effect = _glob_post(pages)
+    res = client.glob("/d/**/*.mp4")
+    assert {e.path for e in res} == {"/d/a.mp4", "/d/movies/b.mp4"}
+
+
+def test_glob_single_star_is_shallow(client):
+    pages = {
+        "/d": {"list": [_entry("x.mkv", "/d/x.mkv"), _entry("sub", "/d/sub", is_dir="1")]},
+        "/d/sub": {"list": [_entry("y.mkv", "/d/sub/y.mkv")]},
+    }
+    client._http.post.side_effect = _glob_post(pages)
+    res = client.glob("/d/*.mkv")
+    assert [e.path for e in res] == ["/d/x.mkv"]
+
+
+def test_glob_sorts_by_path(client):
+    pages = {"/d": {"list": [_entry("b", "/d/b.mkv"), _entry("a", "/d/a.mkv")]}}
+    client._http.post.side_effect = _glob_post(pages)
+    res = client.glob("/d/*.mkv")
+    assert [e.path for e in res] == ["/d/a.mkv", "/d/b.mkv"]
+
+
+def test_glob_rejects_relative_or_wildcardless(client):
+    with pytest.raises(ValueError):
+        client.glob("relative/*.mp4")
+    with pytest.raises(ValueError):
+        client.glob("/d/no-wildcard")
+
+
+def test_client_default_base_url_from_env(monkeypatch, creds):
+    monkeypatch.setenv("ZS_BASE_URL", "http://nas:13579")
+    c = ZSpaceClient(credentials=creds)
+    assert c.base_url == "http://nas:13579"
+    c.close()
+
+
 # --- tree / _tree_walk ---
 
 

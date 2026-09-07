@@ -148,6 +148,42 @@ ZS_CONFIG_DIR=~/path/to/zspace-config zs check   # 或环境变量
 }
 ```
 
+### Docker（无头运行）
+
+在容器里跑 CLI / MCP server，连接**宿主机**上的桌面客户端代理——镜像内不需要装客户端：
+
+```bash
+export ZS_CONFIG_HOST_DIR="$HOME/Library/Application Support/zspace"   # macOS
+# export ZS_CONFIG_HOST_DIR="$APPDATA/zspace"                          # Windows
+# export ZS_CONFIG_HOST_DIR="$HOME/.zspace"                            # Linux
+docker compose build
+docker compose run --rm zspace-cli zs check
+docker compose run --rm zspace-cli zs ls /sata11/my/data
+```
+
+容器只读挂载宿主机极空间配置（`ZS_CONFIG_HOST_DIR`），并通过 `host.docker.internal` 用 `ZS_BASE_URL` 指向宿主机。Linux 宿主机可用 `network_mode: host` 或自带的 `extra_hosts` 映射。纯容器方式：
+
+```bash
+docker build -t zspace-cli .
+docker run --rm --network host \
+  -e ZS_BASE_URL=http://127.0.0.1:13579 \
+  -e ZS_CONFIG_DIR=/config \
+  -v "$HOME/Library/Application Support/zspace:/config:ro" \
+  zspace-cli zs check
+```
+
+### Glob 批量操作
+
+`rm` / `mv` / `cp` / `down` 支持 glob 通配（`*`、`?`、`[...]`、`**`），会在 NAS 上展开：
+
+```bash
+zs rm "/sata11/my/data/影视/*.mkv" --force
+zs cp "/sata11/my/data/**/*.mp4" /sata11/my/data/movies
+zs down "/sata11/my/data/photos/*.jpg" ./photos
+```
+
+SDK 方式：`client.glob("/sata11/my/data/**/*.mkv")`。
+
 ---
 
 ## API 参考
@@ -190,8 +226,8 @@ zspace-cli/
 
 - [x] 文件上传 / 下载
 - [x] Linux / Windows 客户端鉴权（尽力路径探测 + `ZS_CONFIG_DIR`）
-- [ ] Docker 无头模式
-- [ ] 批量 glob 辅助
+- [x] Docker 无头模式（`ZS_BASE_URL` + `docker-compose.yml`）
+- [x] 批量 glob 辅助（`glob()` + `zs rm/mv/cp/down` 通配）
 
 ---
 

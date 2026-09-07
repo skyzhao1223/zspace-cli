@@ -1,0 +1,27 @@
+# Headless run of zspace-cli in a container, talking to the ZSpace desktop
+# client proxy running on the Docker host (no desktop client inside the image).
+#
+# Usage (export the host config dir first):
+#   export ZS_CONFIG_HOST_DIR="$HOME/Library/Application Support/zspace"   # macOS
+#   export ZS_CONFIG_HOST_DIR="$APPDATA/zspace"                            # Windows
+#   export ZS_CONFIG_HOST_DIR="$HOME/.zspace"                              # Linux
+#   docker compose build
+#   docker compose run --rm zspace-cli zs check
+#   docker compose run --rm zspace-cli zs ls /sata11/my/data
+#
+# Networking: the desktop client listens on 127.0.0.1:13579 on the host.
+#   - Docker Desktop (macOS/Windows): host.docker.internal reaches host loopback.
+#   - Linux: either use `network_mode: host` (and ZS_BASE_URL=http://127.0.0.1:13579)
+#     or the extra_hosts mapping below with ZS_BASE_URL=http://host.docker.internal:13579.
+services:
+  zspace-cli:
+    build: .
+    image: zspace-cli:latest
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - ZS_BASE_URL=http://host.docker.internal:13579
+      - ZS_CONFIG_DIR=/config
+    volumes:
+      - ${ZS_CONFIG_HOST_DIR:?set ZS_CONFIG_HOST_DIR to the client config dir}:/config:ro
+    command: ["zs", "check"]

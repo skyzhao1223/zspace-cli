@@ -74,6 +74,13 @@ def _size_str(size: int) -> str:
     return f"{size} B"
 
 
+def _expand_glob(c: ZSpaceClient, arg: str) -> list[str]:
+    """Expand a glob pattern into concrete NAS paths; literal args pass through."""
+    if any(ch in arg for ch in "*?["):
+        return [e.path for e in c.glob(arg)]
+    return [arg]
+
+
 @app.command()
 def check():
     """检查极空间客户端连接状态"""
@@ -179,14 +186,18 @@ def rename(
 
 @app.command()
 def mv(
-    src: str = typer.Argument(..., help="源路径"),
+    src: str = typer.Argument(..., help="源路径（支持 * ? glob）"),
     dest: str = typer.Argument(..., help="目标目录"),
 ):
     """移动文件或目录"""
     with _client() as c:
         try:
-            c.move(src, dest)
-            console.print(f"[green]OK[/green] 已移动到 [bold]{dest}[/bold]")
+            paths = _expand_glob(c, src)
+            if not paths:
+                console.print("[yellow]没有匹配的文件[/yellow]")
+                return
+            c.move(paths, dest)
+            console.print(f"[green]OK[/green] 已移动 {len(paths)} 项到 [bold]{dest}[/bold]")
         except ZSpaceError as e:
             console.print(f"[red]![/red] {e}")
             raise typer.Exit(1)
@@ -194,14 +205,18 @@ def mv(
 
 @app.command()
 def cp(
-    src: str = typer.Argument(..., help="源路径"),
+    src: str = typer.Argument(..., help="源路径（支持 * ? glob）"),
     dest: str = typer.Argument(..., help="目标目录"),
 ):
     """复制文件或目录"""
     with _client() as c:
         try:
-            c.copy(src, dest)
-            console.print(f"[green]OK[/green] 复制到 [bold]{dest}[/bold]")
+            paths = _expand_glob(c, src)
+            if not paths:
+                console.print("[yellow]没有匹配的文件[/yellow]")
+                return
+            c.copy(paths, dest)
+            console.print(f"[green]OK[/green] 已复制 {len(paths)} 项到 [bold]{dest}[/bold]")
         except ZSpaceError as e:
             console.print(f"[red]![/red] {e}")
             raise typer.Exit(1)
@@ -224,19 +239,22 @@ def mkdir(
 
 @app.command()
 def rm(
-    path: str = typer.Argument(..., help="要删除的路径"),
+    path: str = typer.Argument(..., help="要删除的路径（支持 * ? glob）"),
     force: bool = typer.Option(False, "--force", "-f", help="跳过确认"),
 ):
     """删除文件或目录"""
-    if not force:
-        confirm = typer.confirm(f"确定要删除 {path}？")
-        if not confirm:
-            raise typer.Abort()
-
     with _client() as c:
         try:
-            c.remove(path)
-            console.print("[green]OK[/green] 已删除")
+            paths = _expand_glob(c, path)
+            if not paths:
+                console.print("[yellow]没有匹配的文件[/yellow]")
+                return
+            if not force:
+                for p in paths:
+                    if not typer.confirm(f"确定要删除 {p}？"):
+                        raise typer.Abort()
+            c.remove(paths)
+            console.print(f"[green]OK[/green] 已删除 {len(paths)} 项")
         except ZSpaceError as e:
             console.print(f"[red]![/red] {e}")
             raise typer.Exit(1)
@@ -358,14 +376,19 @@ def down(
         ) as prog:
             task = prog.add_task(f"[cyan]下载 {Path(remote_path).name}[/cyan]", total=None)
             try:
-                out = c.download(
-                    remote_path,
-                    local_dir,
-                    progress=lambda done, total: prog.update(
-                        task, completed=done, total=total or None
-                    ),
-                )
-                console.print(f"[green]OK[/green] 已下载到 [bold]{out}[/bold]")
+                paths = _expand_glob(c, remote_path)
+                if not paths:
+                    console.print("[yellow]没有匹配的文件[/yellow]")
+                    return
+                for p in paths:
+                    out = c.download(
+                        p,
+                        local_dir,
+                        progress=lambda done, total: prog.update(
+                            task, completed=done, total=total or None
+                        ),
+                    )
+                    console.print(f"[green]OK[/green] 已下载到 [bold]{out}[/bold]")
             except ZSpaceError as e:
                 console.print(f"[red]![/red] {e}")
                 raise typer.Exit(1)

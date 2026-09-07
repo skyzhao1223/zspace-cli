@@ -11,7 +11,12 @@ from typing import Any
 
 import httpx
 
-from zspace_cli.auth import Credentials, check_client_running, load_credentials
+from zspace_cli.auth import (
+    Credentials,
+    check_client_running,
+    default_base_url,
+    load_credentials,
+)
 
 # Network-level failures (connection refused/reset, timeout, 5xx, 429) can be
 # transient — the desktop proxy occasionally hiccups. Business errors
@@ -96,14 +101,16 @@ class ZSpaceClient:
 
     def __init__(
         self,
-        base_url: str = "http://127.0.0.1:13579",
+        base_url: str | None = None,
         credentials: Credentials | None = None,
         config_dir: Path | str | None = None,
         api_version: str = DEFAULT_API_VERSION,
         max_retries: int = 2,
         retry_delay: float = 0.25,
     ):
-        self.base_url = base_url.rstrip("/")
+        # base_url defaults to the desktop client proxy, overridable via the
+        # ZS_BASE_URL env var (e.g. when running in a container against the host).
+        self.base_url = (base_url or default_base_url()).rstrip("/")
         self._creds = credentials or load_credentials(config_dir)
         self.api_version = api_version
         self.max_retries = max_retries
@@ -326,6 +333,45 @@ class ZSpaceClient:
             ]
         return entries[:limit]
 
+    def glob(self, pattern: str) -> list[FileEntry]:
+        """Match NAS paths against a glob pattern and return matching entries.
+
+        Supports ``*``, ``?``, ``[...]`` and ``**`` (any depth), e.g.::
+
+            client.glob("/sata11/my/data/影视/*.mkv")
+            client.glob("/sata11/my/data/**/*.mp4")
+
+        The static prefix before the first wildcard is the scan root; the NAS
+        directory tree is walked from there. Patterns must be absolute.
+        """
+        if not pattern.startswith("/"):
+            raise ValueError(f"glob pattern must be absolute: {pattern!r}")
+        if not any(ch in pattern for ch in "*?["):
+            raise ValueError(f"no wildcard in glob pattern: {pattern!r}")
+
+        root = pattern
+        for i, ch in enumerate(pattern):
+            if ch in "*?[":
+                root = pattern[:i].rstrip("/") or "/"
+                break
+        regex = _glob_to_regex(pattern)
+        matches: list[FileEntry] = []
+
+        def walk(path: str) -> None:
+            try:
+                entries = self.ls(path)
+            except ZSpaceError:
+                return
+            for e in entries:
+                if regex.match(e.path):
+                    matches.append(e)
+                if e.is_dir:
+                    walk(e.path)
+
+        walk(root)
+        matches.sort(key=lambda e: e.path)
+        return matches
+
     def upload(
         self,
         local_path: Path | str,
@@ -454,3 +500,44 @@ class ZSpaceClient:
 def _urlencode(s: str) -> str:
     from urllib.parse import quote
     return quote(str(s), safe="")
+
+
+def _glob_to_regex(pattern: str) -> Any:
+    """Translate a glob pattern into an anchored regex (POSIX-like).
+
+    ``**`` matches any number of path segments (including none); ``*`` and ``?``
+    match within a single segment; ``[...]`` is a character class.
+    """
+    import re
+
+    out: list[str] = []
+    i = 0
+    n = len(pattern)
+    while i < n:
+        ch = pattern[i]
+        if ch == "*":
+            if i + 1 < n and pattern[i + 1] == "*":
+                out.append("(?:.*/)?")
+                i += 2
+                if i < n and pattern[i] == "/":
+                    i += 1
+            else:
+                out.append("[^/]*")
+                i += 1
+        elif ch == "?":
+            out.append("[^/]")
+            i += 1
+        elif ch == "[":
+            j = i + 1
+            while j < n and pattern[j] != "]":
+                j += 1
+            if j < n:
+                out.append("[" + pattern[i + 1 : j].replace("\\", "\\\\") + "]")
+                i = j + 1
+            else:
+                out.append(r"\[")
+                i += 1
+        else:
+            out.append(re.escape(ch))
+            i += 1
+    return re.compile("^" + "".join(out) + "$")

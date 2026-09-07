@@ -20,6 +20,9 @@ class Credentials:
 # Env var to override the config directory (helpful when auto-detection
 # misses an installation location on Windows/Linux).
 CONFIG_DIR_ENV = "ZS_CONFIG_DIR"
+# Env var to override the desktop-client proxy URL (used for headless/Docker runs).
+BASE_URL_ENV = "ZS_BASE_URL"
+DEFAULT_BASE_URL = "http://127.0.0.1:13579"
 _VUEX_FILENAME = "vuex.json"
 
 # Cache loaded credentials keyed by (mtime_ns, size) of vuex.json so that
@@ -122,7 +125,12 @@ def load_credentials(config_dir: Path | str | None = None) -> Credentials:
     return creds
 
 
-def check_client_running(base_url: str = "http://127.0.0.1:13579") -> bool:
+def default_base_url() -> str:
+    """Resolve the desktop-client proxy URL (honors the ZS_BASE_URL env var)."""
+    return os.environ.get(BASE_URL_ENV) or DEFAULT_BASE_URL
+
+
+def check_client_running(base_url: str | None = None) -> bool:
     """Quick check if the ZSpace desktop client proxy is reachable."""
     return client_status(base_url).ok
 
@@ -138,7 +146,7 @@ class ClientStatus:
         return f"{'ok' if self.ok else 'not-ok'}: {self.reason}"
 
 
-def client_status(base_url: str = "http://127.0.0.1:13579") -> ClientStatus:
+def client_status(base_url: str | None = None) -> ClientStatus:
     """Probe the local desktop client proxy and explain failures.
 
     Distinguishes "client not running" (connection refused) from "port in
@@ -146,6 +154,8 @@ def client_status(base_url: str = "http://127.0.0.1:13579") -> ClientStatus:
     """
     import httpx
 
+    if not base_url:
+        base_url = default_base_url()
     try:
         # trust_env=False: match ZSpaceClient — the macOS system proxy must not
         # intercept the local desktop client port (127.0.0.1:13579).

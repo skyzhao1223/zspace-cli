@@ -153,6 +153,47 @@ ZS_CONFIG_DIR=~/path/to/zspace-config zs check   # or as an env var
 }
 ```
 
+### Docker (headless)
+
+Run the CLI / MCP server in a container and talk to the desktop client proxy
+on the **host** — no desktop client needed inside the image:
+
+```bash
+export ZS_CONFIG_HOST_DIR="$HOME/Library/Application Support/zspace"   # macOS
+# export ZS_CONFIG_HOST_DIR="$APPDATA/zspace"                          # Windows
+# export ZS_CONFIG_HOST_DIR="$HOME/.zspace"                            # Linux
+docker compose build
+docker compose run --rm zspace-cli zs check
+docker compose run --rm zspace-cli zs ls /sata11/my/data
+```
+
+It mounts the host's ZSpace config read-only (`ZS_CONFIG_HOST_DIR`) and points
+`ZS_BASE_URL` at the host via `host.docker.internal`. On Linux hosts, either use
+`network_mode: host` or the included `extra_hosts` mapping. For a plain
+container run:
+
+```bash
+docker build -t zspace-cli .
+docker run --rm --network host \
+  -e ZS_BASE_URL=http://127.0.0.1:13579 \
+  -e ZS_CONFIG_DIR=/config \
+  -v "$HOME/Library/Application Support/zspace:/config:ro" \
+  zspace-cli zs check
+```
+
+### Globbing
+
+`rm` / `mv` / `cp` / `down` accept glob patterns (`*`, `?`, `[...]`, `**`) that
+are expanded on the NAS:
+
+```bash
+zs rm "/sata11/my/data/影视/*.mkv" --force
+zs cp "/sata11/my/data/**/*.mp4" /sata11/my/data/movies
+zs down "/sata11/my/data/photos/*.jpg" ./photos
+```
+
+Or via the SDK: `client.glob("/sata11/my/data/**/*.mkv")`.
+
 ---
 
 ## API reference
@@ -195,8 +236,8 @@ zspace-cli/
 
 - [x] File upload/download
 - [x] Linux / Windows client auth (best-effort path detection + `ZS_CONFIG_DIR`)
-- [ ] Docker headless option
-- [ ] Batch glob helpers
+- [x] Docker headless option (`ZS_BASE_URL` + `docker-compose.yml`)
+- [x] Batch glob helpers (`glob()` + `zs rm/mv/cp/down` patterns)
 
 ---
 

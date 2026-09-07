@@ -150,13 +150,13 @@ def test_cli_rename():
 def test_cli_mv():
     r, _, c = _run_cmd("mv", "/d/a.txt", "/d/other")
     assert r.exit_code == 0
-    c.move.assert_called_once_with("/d/a.txt", "/d/other")
+    c.move.assert_called_once_with(["/d/a.txt"], "/d/other")
 
 
 def test_cli_cp():
     r, _, c = _run_cmd("cp", "/d/a.txt", "/d/other")
     assert r.exit_code == 0
-    c.copy.assert_called_once_with("/d/a.txt", "/d/other")
+    c.copy.assert_called_once_with(["/d/a.txt"], "/d/other")
 
 
 def test_cli_mkdir():
@@ -168,7 +168,7 @@ def test_cli_mkdir():
 def test_cli_rm_force():
     r, _, c = _run_cmd("rm", "/d/a.txt", "--force")
     assert r.exit_code == 0
-    c.remove.assert_called_once_with("/d/a.txt")
+    c.remove.assert_called_once_with(["/d/a.txt"])
 
 
 def test_cli_find_hits():
@@ -262,6 +262,77 @@ def test_cli_up_missing_file():
     )
     assert r.exit_code == 1
     assert "不存在" in out
+
+
+# --- glob expansion in rm/mv/cp/down ---
+
+
+def _mkv_entries():
+    return [
+        FileEntry("a.mkv", "/d/a.mkv", False),
+        FileEntry("b.mkv", "/d/b.mkv", False),
+    ]
+
+
+def test_cli_rm_glob_expands():
+    r, _, c = _run_cmd(
+        "rm", "/d/*.mkv", "--force",
+        client_overrides={"glob.return_value": _mkv_entries()},
+    )
+    assert r.exit_code == 0
+    c.remove.assert_called_once_with(["/d/a.mkv", "/d/b.mkv"])
+
+
+def test_cli_mv_glob_expands():
+    r, _, c = _run_cmd(
+        "mv", "/d/*.mkv", "/d/other",
+        client_overrides={"glob.return_value": _mkv_entries()},
+    )
+    assert r.exit_code == 0
+    c.move.assert_called_once_with(["/d/a.mkv", "/d/b.mkv"], "/d/other")
+
+
+def test_cli_cp_glob_expands():
+    r, _, c = _run_cmd(
+        "cp", "/d/*.mkv", "/d/other",
+        client_overrides={"glob.return_value": _mkv_entries()},
+    )
+    assert r.exit_code == 0
+    c.copy.assert_called_once_with(["/d/a.mkv", "/d/b.mkv"], "/d/other")
+
+
+def test_cli_down_glob_expands(tmp_path):
+    r, out, c = _run_cmd(
+        "down", "/d/*.mkv", str(tmp_path),
+        client_overrides={
+            "glob.return_value": [FileEntry("a.mkv", "/d/a.mkv", False)],
+            "download.return_value": tmp_path / "a.mkv",
+        },
+    )
+    assert r.exit_code == 0
+    c.download.assert_called_once()
+    assert "已下载" in out
+
+
+def test_cli_rm_glob_no_match():
+    r, out, c = _run_cmd(
+        "rm", "/d/*.mkv", "--force",
+        client_overrides={"glob.return_value": []},
+    )
+    assert r.exit_code == 0
+    assert "没有匹配" in out
+    c.remove.assert_not_called()
+
+
+def test_cli_glob_error_branch():
+    from zspace_cli.client import ZSpaceError
+
+    r, out, _ = _run_cmd(
+        "mv", "/d/*.mkv", "/d/other",
+        client_overrides={"glob.side_effect": ZSpaceError("500", "glob failed")},
+    )
+    assert r.exit_code == 1
+    assert "glob failed" in out
 
 
 # --- --config-dir / ZS_CONFIG_DIR ---

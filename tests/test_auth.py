@@ -10,6 +10,7 @@ from zspace_cli.auth import (
     Credentials,
     _candidate_dirs,
     client_status,
+    default_base_url,
     load_credentials,
 )
 
@@ -202,3 +203,29 @@ def test_client_status_other_status(monkeypatch):
     monkeypatch.setattr("httpx.get", fake_get)
     status = client_status()
     assert status.ok is False
+
+
+def test_default_base_url_env(monkeypatch):
+    monkeypatch.setenv("ZS_BASE_URL", "http://host:13579")
+    assert default_base_url() == "http://host:13579"
+
+
+def test_default_base_url_fallback(monkeypatch):
+    monkeypatch.delenv("ZS_BASE_URL", raising=False)
+    assert default_base_url() == "http://127.0.0.1:13579"
+
+
+def test_client_status_uses_env_base_url(monkeypatch):
+    import httpx
+
+    monkeypatch.setenv("ZS_BASE_URL", "http://10.0.0.5:13579")
+    seen = {}
+
+    def fake_get(url, timeout=3, trust_env=False):  # noqa: ARG001
+        seen["url"] = url
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr("httpx.get", fake_get)
+    status = client_status()
+    assert status.ok is False
+    assert seen["url"].startswith("http://10.0.0.5:13579")
