@@ -1,10 +1,21 @@
+<div align="center">
+
 # zspace-cli（中文）
+
+**简体中文** · [English](../README.md)
+
+[![PyPI - Version](https://img.shields.io/pypi/v/zspace-cli?cacheSeconds=3600)](https://pypi.org/project/zspace-cli/)
+[![PyPI - Python](https://img.shields.io/pypi/pyversions/zspace-cli?cacheSeconds=3600)](https://pypi.org/project/zspace-cli/)
+[![CI](https://github.com/skyzhao1223/zspace-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/skyzhao1223/zspace-cli/actions/workflows/ci.yml)
+[![skyzhao1223/zspace-cli MCP server](https://glama.ai/mcp/servers/skyzhao1223/zspace-cli/badges/score.svg)](https://glama.ai/mcp/servers/skyzhao1223/zspace-cli)
+
+</div>
 
 用命令行或 AI Agent 管理你的**极空间 NAS** —— 不填密码、不开 SSH、不配 DDNS。
 
 > 只要 macOS 上极空间桌面客户端已登录即可。
 
-[English README](../README.md) · [Skills 说明](../skills/README.md)
+[Skills 说明](../skills/README.md) · [English README](../README.md)
 
 ---
 
@@ -48,6 +59,29 @@ zs skill ~/your-project/skills/           # Claude Code 等（可复制到多个
 ```
 
 复制后，直接对你的 Agent 说「列出 NAS `/sata11/my/data` 里的文件」即可。Skills 清单见 [skills/README.md](../skills/README.md)。
+
+---
+
+## CLI 命令一览
+
+| 命令 | 说明 |
+|------|------|
+| `zs check` | 检查桌面客户端代理是否可达 |
+| `zs ls [path]` | 列目录（`-a/--hidden` 显示隐藏，`-l/--long` 详细） |
+| `zs info <path>` | 查看文件/目录详情 |
+| `zs rename <path> <new>` | 重命名 |
+| `zs mv <src> <dest>` | 移动 |
+| `zs cp <src> <dest>` | 复制 |
+| `zs mkdir <parent> <name>` | 新建目录 |
+| `zs rm <path>` | 删除（`-f/--force` 跳过确认） |
+| `zs find <keyword> [path]` | NAS 全文搜索 |
+| `zs tree [path]` | 树形浏览（`-d/--depth N`，默认 2） |
+| `zs up <local> <remote_dir>` | 上传（`-n/--name` 指定远端文件名） |
+| `zs down <path> [dir]` | 下载 |
+| `zs skill <dir>` | 把 Agent skills 复制到项目目录 |
+| `zs --config-dir <dir>` | 指定非默认 `vuex.json` 位置（或环境变量 `ZS_CONFIG_DIR`） |
+
+> `ls` 自动分页（NAS 单次最多 50 条，会循环拉全）；`find` 走 NAS 全文索引，跨目录搜索。上传/下载在真实终端显示进度条，且为流式传输（不整文件读入内存）。
 
 ---
 
@@ -128,6 +162,24 @@ ZS_CONFIG_DIR=~/path/to/zspace-config zs check   # 或环境变量
 | `/file_search/file_search` | `keyword` |
 
 > 注意：接口参数名不标准（如用 `parent`/`to` 而非 `path`/`dest`），这是极空间接口本身的命名习惯，由社区根据桌面客户端行为整理。
+
+---
+
+## 仓库结构
+
+```
+zspace-cli/
+├── src/zspace_cli/
+│   ├── cli.py         # Typer CLI（zs ...）
+│   ├── client.py      # ZSpaceClient SDK（重试 / 流式 / 进度）
+│   ├── auth.py        # vuex.json 自动探测 + 凭据缓存
+│   ├── mcp_server.py  # MCP tools（zs-mcp）
+│   └── skills/        # 打包进 wheel 的 Agent skills
+├── skills/            # Skill 文档与源
+├── scripts/mcp_smoke.py
+├── tests/             # pytest（CLI + SDK + MCP + auth）
+└── promo/             # 发布/推广材料（submodule）
+```
 
 ---
 

@@ -1,13 +1,21 @@
+<div align="center">
+
 # zspace-cli
 
-[![skyzhao1223/zspace-cli MCP server](https://glama.ai/mcp/servers/skyzhao1223/zspace-cli/badges/score.svg)](https://glama.ai/mcp/servers/skyzhao1223/zspace-cli)
+**English** · [简体中文](docs/README.zh.md)
+
+[![PyPI - Version](https://img.shields.io/pypi/v/zspace-cli?cacheSeconds=3600)](https://pypi.org/project/zspace-cli/)
+[![PyPI - Python](https://img.shields.io/pypi/pyversions/zspace-cli?cacheSeconds=3600)](https://pypi.org/project/zspace-cli/)
 [![CI](https://github.com/skyzhao1223/zspace-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/skyzhao1223/zspace-cli/actions/workflows/ci.yml)
+[![skyzhao1223/zspace-cli MCP server](https://glama.ai/mcp/servers/skyzhao1223/zspace-cli/badges/score.svg)](https://glama.ai/mcp/servers/skyzhao1223/zspace-cli)
+
+</div>
 
 Manage your 极空间 (ZSpace) NAS from the terminal or AI agents — **no password, no SSH, no DDNS**.
 
 > Just keep the ZSpace desktop client logged in on macOS.
 
-[中文文档](docs/README.zh.md) · [Skills](skills/README.md)
+[Skills](skills/README.md) · [中文文档](docs/README.zh.md)
 
 ---
 
@@ -41,14 +49,28 @@ with ZSpaceClient() as zs:
         print(f"{'📁' if f.is_dir else '📄'} {f.name}")
 ```
 
-### Use with AI agents (Skills)
+---
 
-```bash
-zs skill ~/your-project/.cursor/skills/   # Cursor
-# zs skill ~/your-project/skills/         # Claude Code, etc.
-```
+## CLI options
 
-Then tell your agent things like "list the files in `/sata11/my/data`". See [skills/README.md](skills/README.md) for the full skill list.
+| Command | Meaning |
+|---------|---------|
+| `zs check` | Verify the desktop client proxy is reachable |
+| `zs ls [path]` | List directory (`-a/--hidden`, `-l/--long`) |
+| `zs info <path>` | Detailed file/dir info |
+| `zs rename <path> <new>` | Rename a file or directory |
+| `zs mv <src> <dest>` | Move a file/directory |
+| `zs cp <src> <dest>` | Copy a file/directory |
+| `zs mkdir <parent> <name>` | Create a directory |
+| `zs rm <path>` | Delete (`-f/--force` skips confirmation) |
+| `zs find <keyword> [path]` | Full-text search across the NAS |
+| `zs tree [path]` | Tree view (`-d/--depth N`, default 2) |
+| `zs up <local> <remote_dir>` | Upload (`-n/--name` to rename remotely) |
+| `zs down <path> [dir]` | Download |
+| `zs skill <dir>` | Copy Agent skills into a project |
+| `zs --config-dir <dir>` | Point at a non-default `vuex.json` location (or `ZS_CONFIG_DIR`) |
+
+> `ls` pages through large directories automatically (the NAS API returns at most 50 entries per call). `find` uses the NAS full-text index, so it searches across directories. Upload/download show a progress bar on a real terminal and stream the file (no full-file buffering).
 
 ---
 
@@ -69,7 +91,18 @@ Then tell your agent things like "list the files in `/sata11/my/data`". See [ski
 | Download | `zs down <path> [dir]` | `client.download(path, dir)` | `zspace_download` |
 | Health check | `zs check` | `client.is_connected()` | `zspace_check` |
 
-> `ls` pages through large directories automatically (the NAS API returns at most 50 entries per call). `find` uses the NAS full-text index, so it searches across directories.
+---
+
+## Use with AI agents (Skills)
+
+```bash
+zs skill ~/your-project/.cursor/skills/   # Cursor
+# zs skill ~/your-project/skills/         # Claude Code, etc.
+```
+
+Then tell your agent things like "list the files in `/sata11/my/data`". See [skills/README.md](skills/README.md) for the full skill list.
+
+The skills ship inside the wheel, so `zs skill` works on any machine that has `zspace-cli` installed.
 
 ---
 
@@ -132,6 +165,24 @@ ZS_CONFIG_DIR=~/path/to/zspace-config zs check   # or as an env var
 | `/file_search/file_search` | `keyword` |
 
 > Note: the interface parameter names are non-standard (`parent` / `to` instead of `path` / `dest`) — documented by the community from the desktop client's behavior.
+
+---
+
+## Repository layout
+
+```
+zspace-cli/
+├── src/zspace_cli/
+│   ├── cli.py         # Typer CLI (zs ...)
+│   ├── client.py      # ZSpaceClient SDK (retry / stream / progress)
+│   ├── auth.py        # vuex.json auto-detection + credential cache
+│   ├── mcp_server.py  # MCP tools (zs-mcp)
+│   └── skills/        # Agent skills shipped inside the wheel
+├── skills/            # Skill docs + sources
+├── scripts/mcp_smoke.py
+├── tests/             # pytest (CLI + SDK + MCP + auth)
+└── promo/             # launch/promo material (submodule)
+```
 
 ---
 
