@@ -37,7 +37,7 @@ _config_dir: str | None = None
 
 @app.callback()
 def _main(
-    config_dir: Optional[str] = typer.Option(  # noqa: UP007 - typer needs runtime type on py3.9
+    config_dir: Optional[str] = typer.Option(
         None,
         "--config-dir",
         envvar=CONFIG_DIR_ENV,
