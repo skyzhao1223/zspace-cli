@@ -83,6 +83,28 @@ Skill / zs / SDK / MCP  →  127.0.0.1:13579 (desktop client proxy)  →  NAS
 
 > **Disclaimer** — This is an **unofficial, community-maintained** project, not affiliated with or endorsed by ZSpace (极空间). It relies on the desktop client's local proxy interface, which is **not officially documented**. It only reads the login state of **your own** account on **your own** machine — it does not bypass authentication, crack encryption, or touch anyone else's data. Use at your own risk; make sure your use complies with the ZSpace user agreement and your local laws.
 
+### Platform support
+
+Works on any OS where the ZSpace desktop client exposes its local proxy on
+`127.0.0.1:13579`. The login state (`vuex.json`) is auto-detected:
+
+| Platform | Default location |
+|----------|------------------|
+| macOS | `~/Library/Application Support/zspace/vuex.json` |
+| Windows | `%APPDATA%\zspace\vuex.json` (also tries `%LOCALAPPDATA%`, `%USERPROFILE%`) |
+| Linux | `~/.zspace/vuex.json`, `~/.config/zspace/vuex.json` (best-effort) |
+
+If the client stores it elsewhere, point the CLI/SDK at it explicitly:
+
+```bash
+zs --config-dir ~/path/to/zspace-config check
+ZS_CONFIG_DIR=~/path/to/zspace-config zs check   # or as an env var
+```
+
+> Windows/Linux config locations are best-effort guesses (not verified against
+> a real client). If auto-detection misses yours, please open an issue with the
+> actual path so it can be added.
+
 ### MCP configuration (optional)
 
 ```json
@@ -116,7 +138,7 @@ Skill / zs / SDK / MCP  →  127.0.0.1:13579 (desktop client proxy)  →  NAS
 ## Roadmap
 
 - [x] File upload/download
-- [ ] Linux / Windows client auth
+- [x] Linux / Windows client auth (best-effort path detection + `ZS_CONFIG_DIR`)
 - [ ] Docker headless option
 - [ ] Batch glob helpers
 

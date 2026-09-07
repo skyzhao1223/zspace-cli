@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      how:
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[mcp,dev]" build twine
+      - name: doctor gate
+        run: python -c "import zspace_cli; print('ok', zspace_cli.__version__)"
+      - name: bump version
+        run: |
+          NEW=${{ inputs.how }}
+          python - <<'EOF'
+          import re, pathlib
+          how = "${{ inputs.how }}"
+          py = pathlib.Path("pyproject.toml")
+          m = re.search(r'^version\s*=\s*"([^"]+)"', py.read_text(), re.M)
+          cur = tuple(int(x) for x in m.group(1).split("."))
+          if how == "major": new = (cur[0]+1, 0, 0)
+          elif how == "minor": new = (cur[0], cur[1]+1, 0)
+          else: new = (cur[0], cur[1], cur[2]+1)
+          ver = ".".join(str(x) for x in new)
+          text = py.read_text()
+          py.write_text(re.sub(r'^version\s*=\s*"[^"]+"', f'version = "{ver}"', text, count=1, flags=re.M))
+          init = pathlib.Path("src/zspace_cli/__init__.py")
+          # version comes from importlib.metadata, so pyproject is the single source
+          print("bumped to", ver)
+          EOF
+      - name: build + verify
+        run: |
+          python -m build
+          python -c "import zipfile, glob; w=sorted(glob.glob('dist/*.whl'))[-1]; z=zipfile.ZipFile(w); print('wheel ok', len(z.namelist()), 'entries')"
+      - name: publish to PyPI
+        run: |
+          python -m twine upload --repository-url https://upload.pypi.org/legacy/ \
+            --username __token__ --password "$PYPI_TOKEN" dist/*.tar.gz dist/*.whl
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+      - name: tag + GitHub Release
+        run: |
+          VER=$(python -c "import re,pathlib; m=re.search(r'^version\s*=\s*\"([^\"]+)\"', pathlib.Path('pyproject.toml').read_text(), re.M); print(m.group(1))")
+          git add -A
+          git -c user.email="actions@github.com" -c user.name="GitHub Actions" \
+            commit -q -m "chore: release v$VER"
+          git tag "v$VER"
+          git push && git push origin "v$VER"
+          gh release create "v$VER" --repo "${{ github.repository }}" \
+            --title "zspace-cli v$VER" --generate-notes

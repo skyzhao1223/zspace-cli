@@ -262,3 +262,64 @@ def test_cli_up_missing_file():
     )
     assert r.exit_code == 1
     assert "不存在" in out
+
+
+# --- --config-dir / ZS_CONFIG_DIR ---
+
+
+def _fake_client_factory(captured):
+    def _fake(*, config_dir=None):
+        captured["config_dir"] = config_dir
+        c = MagicMock()
+        c.__enter__.return_value = c
+        c.ls.return_value = []
+        return c
+
+    return _fake
+
+
+def test_cli_config_dir_flag(tmp_path):
+    import zspace_cli.cli as cli
+
+    captured = {}
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=120)
+    with patch("zspace_cli.cli.console", console), patch(
+        "zspace_cli.cli.ZSpaceClient",
+        side_effect=_fake_client_factory(captured),
+    ):
+        r = CliRunner().invoke(cli.app, ["--config-dir", str(tmp_path), "ls", "/d"])
+    assert r.exit_code == 0
+    assert captured["config_dir"] == str(tmp_path)
+
+
+def test_cli_config_dir_env_var(tmp_path):
+    import zspace_cli.cli as cli
+
+    captured = {}
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=120)
+    with patch("zspace_cli.cli.console", console), patch(
+        "zspace_cli.cli.ZSpaceClient",
+        side_effect=_fake_client_factory(captured),
+    ):
+        r = CliRunner().invoke(
+            cli.app,
+            ["ls", "/d"],
+            env={"ZS_CONFIG_DIR": str(tmp_path)},
+        )
+    assert r.exit_code == 0
+    assert captured["config_dir"] == str(tmp_path)
+
+
+def test_cli_config_dir_missing_shows_tried_paths(tmp_path):
+    import zspace_cli.cli as cli
+
+    nope = tmp_path / "nope"
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=300)
+    with patch("zspace_cli.cli.console", console):
+        r = CliRunner().invoke(cli.app, ["--config-dir", str(nope), "check"])
+    assert r.exit_code == 1
+    assert "配置未找到" in buf.getvalue()
+    assert str(nope) in buf.getvalue()

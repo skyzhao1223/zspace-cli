@@ -19,6 +19,8 @@ classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: End Users/Desktop",
     "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -40,6 +42,7 @@ dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
     "pytest-cov>=5.0",
+    "pytest-xdist>=3.0",
     "ruff>=0.4",
     "pyright>=1.1.380",
 ]
@@ -72,11 +75,12 @@ select = ["E", "F", "I", "N", "W", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "--cov=src/zspace_cli --cov-report=term-missing --cov-fail-under=75"
+addopts = "--cov=src/zspace_cli --cov-report=term-missing --cov-fail-under=75 -n auto"
 
 [tool.coverage.run]
 branch = true
 source = ["src/zspace_cli"]
+parallel = true
 
 [tool.pyright]
 include = ["src"]

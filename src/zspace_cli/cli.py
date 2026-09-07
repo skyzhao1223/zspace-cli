@@ -7,9 +7,18 @@ from pathlib import Path
 import typer
 from rich import box
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    DownloadColumn,
+    Progress,
+    TextColumn,
+    TimeRemainingColumn,
+    TransferSpeedColumn,
+)
 from rich.table import Table
 from rich.tree import Tree
 
+from zspace_cli.auth import CONFIG_DIR_ENV
 from zspace_cli.client import ZSpaceClient, ZSpaceError
 
 app = typer.Typer(
@@ -22,9 +31,27 @@ console = Console()
 
 DEFAULT_PATH = "/sata11/my/data"
 
+_config_dir: str | None = None
+
+
+@app.callback()
+def _main(
+    config_dir: str | None = typer.Option(
+        None,
+        "--config-dir",
+        envvar=CONFIG_DIR_ENV,
+        help="极空间客户端配置目录（默认自动探测）",
+    ),
+) -> None:
+    """Override the ZSpace desktop client config directory."""
+    global _config_dir
+    _config_dir = config_dir
+
 
 def _client() -> ZSpaceClient:
     try:
+        if _config_dir:
+            return ZSpaceClient(config_dir=_config_dir)
         return ZSpaceClient()
     except FileNotFoundError as e:
         console.print(f"[red]✗[/red] {e}")
@@ -270,6 +297,17 @@ def _build_rich_tree(parent: Tree, nodes: list[dict], depth: int) -> None:
         stack.append((branch, d))
 
 
+def _transfer_columns() -> list:
+    """Progress columns for file transfer (hidden when not a real terminal)."""
+    return [
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        DownloadColumn(),
+        TransferSpeedColumn(),
+        TimeRemainingColumn(),
+    ]
+
+
 @app.command()
 def up(
     local: Path = typer.Argument(..., help="本地文件路径"),
@@ -278,16 +316,31 @@ def up(
 ):
     """上传本地文件到 NAS"""
     with _client() as c:
-        try:
-            result = c.upload(local, remote_dir, new_name=name)
-            target = result.get("path", f"{remote_dir.rstrip('/')}/{local.name}")
-            console.print(f"[green]✓[/green] 已上传到 [bold]{target}[/bold]")
-        except ZSpaceError as e:
-            console.print(f"[red]✗[/red] {e}")
-            raise typer.Exit(1)
-        except FileNotFoundError as e:
-            console.print(f"[red]✗[/red] {e}")
-            raise typer.Exit(1)
+        with Progress(
+            *_transfer_columns(), console=console, disable=not console.is_terminal
+        ) as prog:
+            try:
+                size = local.stat().st_size
+            except OSError:
+                size = 0
+            task = prog.add_task(f"[cyan]上传 {local.name}[/cyan]", total=size or None)
+            try:
+                result = c.upload(
+                    local,
+                    remote_dir,
+                    new_name=name,
+                    progress=lambda done, total: prog.update(
+                        task, completed=done, total=total or None
+                    ),
+                )
+                target = result.get("path", f"{remote_dir.rstrip('/')}/{local.name}")
+                console.print(f"[green]✓[/green] 已上传到 [bold]{target}[/bold]")
+            except ZSpaceError as e:
+                console.print(f"[red]✗[/red] {e}")
+                raise typer.Exit(1)
+            except FileNotFoundError as e:
+                console.print(f"[red]✗[/red] {e}")
+                raise typer.Exit(1)
 
 
 @app.command()
@@ -297,12 +350,22 @@ def down(
 ):
     """从 NAS 下载文件到本地"""
     with _client() as c:
-        try:
-            out = c.download(remote_path, local_dir)
-            console.print(f"[green]✓[/green] 已下载到 [bold]{out}[/bold]")
-        except ZSpaceError as e:
-            console.print(f"[red]✗[/red] {e}")
-            raise typer.Exit(1)
+        with Progress(
+            *_transfer_columns(), console=console, disable=not console.is_terminal
+        ) as prog:
+            task = prog.add_task(f"[cyan]下载 {Path(remote_path).name}[/cyan]", total=None)
+            try:
+                out = c.download(
+                    remote_path,
+                    local_dir,
+                    progress=lambda done, total: prog.update(
+                        task, completed=done, total=total or None
+                    ),
+                )
+                console.print(f"[green]✓[/green] 已下载到 [bold]{out}[/bold]")
+            except ZSpaceError as e:
+                console.print(f"[red]✗[/red] {e}")
+                raise typer.Exit(1)
 
 
 @app.command()

@@ -31,6 +31,27 @@ def _err(e: Exception) -> dict[str, str]:
     return {"error": str(e)}
 
 
+def _safe_tool(fn):
+    """Wrap an MCP tool so ZSpace/business errors come back as a structured
+    {"error": ...} result instead of an unhandled exception over the wire.
+    """
+    import functools
+
+    @functools.wraps(fn)
+    async def wrapper(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        try:
+            return await fn(*args, **kwargs)
+        except ZSpaceError as e:
+            return _err(e)
+        except (FileNotFoundError, ValueError) as e:
+            return _err(e)
+        except Exception as e:  # noqa: BLE001 - report anything to the agent
+            return _err(e)
+
+    return wrapper
+
+
+@_safe_tool
 @server.tool()
 async def zspace_check() -> dict[str, Any]:
     """检查极空间 NAS 连接状态和存储信息 / Check ZSpace NAS connection status and storage info"""
@@ -53,6 +74,7 @@ async def zspace_check() -> dict[str, Any]:
         return _ok(result)
 
 
+@_safe_tool
 @server.tool()
 async def zspace_ls(path: str = "/sata11/my/data", show_hidden: bool = False) -> dict[str, Any]:
     """列出极空间 NAS 目录内容 / List directory contents on ZSpace NAS"""
@@ -71,6 +93,7 @@ async def zspace_ls(path: str = "/sata11/my/data", show_hidden: bool = False) ->
         )
 
 
+@_safe_tool
 @server.tool()
 async def zspace_info(path: str) -> dict[str, Any]:
     """查看文件或目录详细信息 / Get detailed file/directory info"""
@@ -78,6 +101,7 @@ async def zspace_info(path: str) -> dict[str, Any]:
         return _ok(c.info(path))
 
 
+@_safe_tool
 @server.tool()
 async def zspace_rename(path: str, new_name: str) -> dict[str, Any]:
     """重命名文件或目录 / Rename a file or directory"""
@@ -86,6 +110,7 @@ async def zspace_rename(path: str, new_name: str) -> dict[str, Any]:
         return _ok({"name": result.name, "path": result.path})
 
 
+@_safe_tool
 @server.tool()
 async def zspace_mkdir(parent: str, name: str) -> dict[str, Any]:
     """在极空间 NAS 上创建新目录 / Create a new directory"""
@@ -94,6 +119,7 @@ async def zspace_mkdir(parent: str, name: str) -> dict[str, Any]:
         return _ok({"name": result.name, "path": result.path})
 
 
+@_safe_tool
 @server.tool()
 async def zspace_move(paths: str | list[str], to: str) -> dict[str, Any]:
     """移动文件或目录 / Move files or directories"""
@@ -104,6 +130,7 @@ async def zspace_move(paths: str | list[str], to: str) -> dict[str, Any]:
         return _ok({"status": "moved", "paths": paths, "to": to})
 
 
+@_safe_tool
 @server.tool()
 async def zspace_copy(paths: str | list[str], to: str) -> dict[str, Any]:
     """复制文件或目录 / Copy files or directories"""
@@ -114,6 +141,7 @@ async def zspace_copy(paths: str | list[str], to: str) -> dict[str, Any]:
         return _ok({"status": "copied", "paths": paths, "to": to})
 
 
+@_safe_tool
 @server.tool()
 async def zspace_remove(paths: str | list[str]) -> dict[str, Any]:
     """删除文件或目录 / Delete files or directories"""
@@ -124,6 +152,7 @@ async def zspace_remove(paths: str | list[str]) -> dict[str, Any]:
         return _ok({"status": "removed", "paths": paths})
 
 
+@_safe_tool
 @server.tool()
 async def zspace_search(keyword: str, path: str = "/sata11/my/data") -> dict[str, Any]:
     """按文件名搜索 / Search files by name"""
@@ -137,6 +166,7 @@ async def zspace_search(keyword: str, path: str = "/sata11/my/data") -> dict[str
         )
 
 
+@_safe_tool
 @server.tool()
 async def zspace_tree(path: str = "/sata11/my/data", depth: int = 2) -> dict[str, Any]:
     """树形展示目录结构 / Show directory tree"""
@@ -144,6 +174,7 @@ async def zspace_tree(path: str = "/sata11/my/data", depth: int = 2) -> dict[str
         return _ok(c.tree(path, max_depth=depth))
 
 
+@_safe_tool
 @server.tool()
 async def zspace_upload(
     local_path: str, remote_dir: str, new_name: str | None = None
@@ -154,6 +185,7 @@ async def zspace_upload(
         return _ok(result)
 
 
+@_safe_tool
 @server.tool()
 async def zspace_download(remote_path: str, local_dir: str = ".") -> dict[str, Any]:
     """从 NAS 下载文件到本地 / Download a file from the NAS"""

@@ -82,6 +82,25 @@ Skill / zs / SDK / MCP  →  127.0.0.1:13579（桌面客户端代理）  →  NA
 
 > **免责声明**：本项目是**非官方的社区项目**，与极空间官方无关，也未获其认可。它依赖桌面客户端的本地代理接口，该接口**并非官方公开文档**。本项目**只读取你本机、你自己账号的登录态**——不绕过认证、不破解加密、不触碰他人数据。请自行承担使用风险，并确保你的使用符合极空间的用户协议及当地法律。
 
+### 平台支持
+
+任何系统只要桌面客户端在 `127.0.0.1:13579` 暴露本地代理即可使用。登录态（`vuex.json`）自动探测：
+
+| 平台 | 默认位置 |
+|------|----------|
+| macOS | `~/Library/Application Support/zspace/vuex.json` |
+| Windows | `%APPDATA%\zspace\vuex.json`（也尝试 `%LOCALAPPDATA%`、`%USERPROFILE%`） |
+| Linux | `~/.zspace/vuex.json`、`~/.config/zspace/vuex.json`（尽力而为） |
+
+若客户端把配置放在别处，可显式指定：
+
+```bash
+zs --config-dir ~/path/to/zspace-config check
+ZS_CONFIG_DIR=~/path/to/zspace-config zs check   # 或环境变量
+```
+
+> Windows/Linux 配置路径是尽力猜测（未经真实客户端验证）。若自动探测不到你的路径，请开 issue 附上实际路径，便于补充。
+
 ### 可选：MCP 配置
 
 ```json
@@ -115,7 +134,7 @@ Skill / zs / SDK / MCP  →  127.0.0.1:13579（桌面客户端代理）  →  NA
 ## Roadmap
 
 - [x] 文件上传 / 下载
-- [ ] Linux / Windows 客户端鉴权
+- [x] Linux / Windows 客户端鉴权（尽力路径探测 + `ZS_CONFIG_DIR`）
 - [ ] Docker 无头模式
 - [ ] 批量 glob 辅助
 

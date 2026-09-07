@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import random
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,39 @@ from typing import Any
 import httpx
 
 from zspace_cli.auth import Credentials, check_client_running, load_credentials
+
+# Network-level failures (connection refused/reset, timeout, 5xx, 429) can be
+# transient — the desktop proxy occasionally hiccups. Business errors
+# (ZSpaceError, HTTP 4xx) are not retried.
+_RETRYABLE_EXC: tuple[type[BaseException], ...] = (
+    httpx.TransportError,
+    httpx.HTTPStatusError,
+)
+
+ProgressCallback = Callable[[int, int], None]
+
+
+class _CountingReader:
+    """Wrap a binary file handle to report upload progress (bytes sent/total)."""
+
+    def __init__(self, fh: Any, total: int, callback: ProgressCallback | None):
+        self._fh = fh
+        self._total = total
+        self._callback = callback
+        self._done = 0
+
+    def read(self, n: int = -1) -> bytes:
+        chunk = self._fh.read(n)
+        self._done += len(chunk)
+        if self._callback is not None:
+            self._callback(self._done, self._total)
+        return chunk
+
+    def __iter__(self):
+        return iter(self._fh)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._fh, name)
 
 
 @dataclass
@@ -66,10 +100,14 @@ class ZSpaceClient:
         credentials: Credentials | None = None,
         config_dir: Path | str | None = None,
         api_version: str = DEFAULT_API_VERSION,
+        max_retries: int = 2,
+        retry_delay: float = 0.25,
     ):
         self.base_url = base_url.rstrip("/")
         self._creds = credentials or load_credentials(config_dir)
         self.api_version = api_version
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
         # trust_env=False: macOS system HTTP proxy (e.g. Clash :7897) must not
         # intercept 127.0.0.1:13579, or all API calls return empty 502.
         # The download (GET) endpoint authenticates via a full cookie set
@@ -116,16 +154,12 @@ class ZSpaceClient:
         data = self._common_params()
         if extra:
             data.update(extra)
-        resp = self._http.post(
+        return self._send(
+            "POST",
             self._url(endpoint),
             data=data,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-        resp.raise_for_status()
-        body = resp.json()
-        if body.get("code") != "200":
-            raise ZSpaceError(body.get("code", "?"), body.get("msg", "unknown error"))
-        return body
 
     def _post_with_array(
         self, endpoint: str, paths: list[str], extra: dict[str, str] | None = None
@@ -134,23 +168,61 @@ class ZSpaceClient:
         params = self._common_params()
         if extra:
             params.update(extra)
-        parts: list[str] = []
-        for k, v in params.items():
-            parts.append(f"{_urlencode(k)}={_urlencode(v)}")
+        parts = [f"{_urlencode(k)}={_urlencode(v)}" for k, v in params.items()]
         for p in paths:
             parts.append(f"paths%5B%5D={_urlencode(p)}")
-        body_str = "&".join(parts)
 
-        resp = self._http.post(
+        return self._send(
+            "POST",
             self._url(endpoint),
-            content=body_str,
+            content="&".join(parts),
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
+
+    def _send(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
+        """Send a request, validating the response and retrying transient failures.
+
+        Only network errors / 5xx / 429 are retried, with exponential backoff.
+        Business errors (ZSpaceError) propagate immediately.
+        """
+        call = getattr(self._http, method.lower())
+        for attempt in range(self.max_retries + 1):
+            try:
+                resp = call(url, **kwargs)
+                return self._check_response(resp)
+            except ZSpaceError:
+                raise
+            except _RETRYABLE_EXC as exc:
+                if not self._is_retryable(exc) or attempt >= self.max_retries:
+                    raise
+                time.sleep(min(self.retry_delay * (2**attempt), 2.0))
+        raise RuntimeError("unreachable")
+
+    @staticmethod
+    def _check_response(resp: httpx.Response) -> dict[str, Any]:
         resp.raise_for_status()
         body = resp.json()
         if body.get("code") != "200":
             raise ZSpaceError(body.get("code", "?"), body.get("msg", "unknown error"))
         return body
+
+    @staticmethod
+    def _is_retryable(exc: BaseException) -> bool:
+        if isinstance(exc, httpx.HTTPStatusError):
+            status = exc.response.status_code
+            return status >= 500 or status == 429
+        return isinstance(exc, httpx.TransportError)
+
+    @staticmethod
+    def _parse_entries(raw: list[Any]) -> list[FileEntry]:
+        """Parse a raw API row list, skipping malformed rows."""
+        entries: list[FileEntry] = []
+        for item in raw:
+            try:
+                entries.append(FileEntry.from_api(item))
+            except (KeyError, TypeError):
+                continue
+        return entries
 
     # ── public API ──
 
@@ -192,7 +264,7 @@ class ZSpaceClient:
                 "start": str(start),
                 "limit": str(page_size),
             })
-            page = [FileEntry.from_api(f) for f in body["data"]["list"]]
+            page = self._parse_entries(body.get("data", {}).get("list", []))
             entries.extend(page)
             if len(page) < page_size:
                 break
@@ -246,15 +318,12 @@ class ZSpaceClient:
         """
         body = self._post("/file_search/file_search", {"keyword": keyword})
         raw = body.get("data", {}).get("list", [])
-        entries = []
-        for item in raw:
-            try:
-                entries.append(FileEntry.from_api(item))
-            except (KeyError, TypeError):
-                continue
+        entries = self._parse_entries(raw)
         if path:
             base = path.rstrip("/")
-            entries = [e for e in entries if e.path.startswith(base)]
+            entries = [
+                e for e in entries if e.path == base or e.path.startswith(base + "/")
+            ]
         return entries[:limit]
 
     def upload(
@@ -262,66 +331,108 @@ class ZSpaceClient:
         local_path: Path | str,
         remote_dir: str,
         new_name: str | None = None,
+        progress: ProgressCallback | None = None,
     ) -> dict[str, Any]:
         """Upload a local file to a directory on the NAS.
 
         ``local_path``  — local file to upload.
         ``remote_dir`` — destination directory, e.g. ``/sata11/my/data/影视``.
         ``new_name``   — optional target filename (defaults to local basename).
+        ``progress``   — optional callback ``(bytes_done, bytes_total)``.
         """
         local = Path(local_path)
         if not local.is_file():
             raise FileNotFoundError(f"本地文件不存在: {local}")
         target_name = new_name or local.name
         target = f"{remote_dir.rstrip('/')}/{target_name}"
+        total = local.stat().st_size
+
+        last_exc: BaseException | None = None
         with local.open("rb") as fh:
-            resp = self._http.post(
-                self._url("/v2/file/create"),
-                content=fh,  # stream the file — don't buffer GBs into memory
-                headers={
-                    "Content-Type": "application/octet-stream",
-                    "path": target,
-                },
-            )
-        resp.raise_for_status()
-        body = resp.json()
-        if body.get("code") != "200":
-            raise ZSpaceError(body.get("code", "?"), body.get("msg", "unknown error"))
-        return body.get("data", {})
+            for attempt in range(self.max_retries + 1):
+                fh.seek(0)
+                reader = _CountingReader(fh, total, progress)
+                try:
+                    resp = self._http.post(
+                        self._url("/v2/file/create"),
+                        content=reader,  # stream the file — don't buffer GBs into memory
+                        headers={
+                            "Content-Type": "application/octet-stream",
+                            "path": target,
+                        },
+                    )
+                    return self._check_response(resp).get("data", {})
+                except ZSpaceError:
+                    raise
+                except _RETRYABLE_EXC as exc:
+                    if not self._is_retryable(exc) or attempt >= self.max_retries:
+                        raise
+                    last_exc = exc
+                    time.sleep(min(self.retry_delay * (2**attempt), 2.0))
+        raise last_exc  # type: ignore[misc]
 
     def download(
         self,
         remote_path: str,
         local_dir: Path | str,
         local_name: str | None = None,
+        progress: ProgressCallback | None = None,
     ) -> Path:
-        """Download a file from the NAS to a local directory."""
+        """Download a file from the NAS to a local directory.
+
+        ``progress`` — optional callback ``(bytes_done, bytes_total)``; the total
+        is only known when the server sends a ``Content-Length`` header.
+        """
         dest = Path(local_dir)
         dest.mkdir(parents=True, exist_ok=True)
         name = local_name or Path(remote_path).name
         out = dest / name
-        with self._http.stream(
-            "GET",
-            self._url("/v2/file/download"),
-            params={"path": remote_path, "remote_port": "8050"},
-        ) as resp:
-            resp.raise_for_status()
-            with out.open("wb") as fh:
-                for chunk in resp.iter_bytes():
-                    fh.write(chunk)
-        return out
+        url = self._url("/v2/file/download")
+        params = {"path": remote_path, "remote_port": "8050"}
+
+        last_exc: BaseException | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                with self._http.stream("GET", url, params=params) as resp:
+                    resp.raise_for_status()
+                    total = int(resp.headers.get("content-length") or 0)
+                    downloaded = 0
+                    with out.open("wb") as fh:
+                        for chunk in resp.iter_bytes():
+                            fh.write(chunk)
+                            downloaded += len(chunk)
+                            if progress is not None:
+                                progress(downloaded, total)
+                return out
+            except ZSpaceError:
+                raise
+            except _RETRYABLE_EXC as exc:
+                if not self._is_retryable(exc) or attempt >= self.max_retries:
+                    raise
+                last_exc = exc
+                time.sleep(min(self.retry_delay * (2**attempt), 2.0))
+        raise last_exc  # type: ignore[misc]
 
     def tree(self, path: str = "/sata11/my/data", max_depth: int = 2) -> list[dict[str, Any]]:
         """Recursively list directory structure up to max_depth."""
         result: list[dict[str, Any]] = []
-        self._tree_walk(path, 0, max_depth, result)
+        self._tree_walk(path, 0, max_depth, result, set())
         return result
 
     def _tree_walk(
-        self, path: str, depth: int, max_depth: int, acc: list[dict[str, Any]]
+        self,
+        path: str,
+        depth: int,
+        max_depth: int,
+        acc: list[dict[str, Any]],
+        seen: set[str],
     ) -> None:
         if depth >= max_depth:
             return
+        # skip already-walked dirs (hardlinks / overlapping trees) — saves API calls
+        if path in seen:
+            return
+        seen.add(path)
         try:
             entries = self.ls(path)
         except ZSpaceError:
@@ -337,7 +448,7 @@ class ZSpaceClient:
                 node["size"] = e.size
             acc.append(node)
             if e.is_dir:
-                self._tree_walk(e.path, depth + 1, max_depth, acc)
+                self._tree_walk(e.path, depth + 1, max_depth, acc, seen)
 
 
 def _urlencode(s: str) -> str:

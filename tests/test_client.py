@@ -255,6 +255,32 @@ def test_search_filters_by_path(client):
     assert res[0].path.startswith("/sata11/my/data")
 
 
+def test_search_path_filter_is_segment_aware(client):
+    # /sata11/my/data must NOT match /sata11/my/data2 or /sata11/my/dataset
+    client._http.post.return_value = _resp_mock("200", {"list": [
+        _entry("a", "/sata11/my/data/影视/a.mkv"),
+        _entry("b", "/sata11/my/data2/b.mkv"),
+        _entry("c", "/sata11/my/dataset/c.mkv"),
+        _entry("exact", "/sata11/my/data"),
+    ]})
+    res = client.search("a", path="/sata11/my/data")
+    paths = {e.path for e in res}
+    assert "/sata11/my/data/影视/a.mkv" in paths
+    assert "/sata11/my/data" in paths
+    assert "/sata11/my/data2/b.mkv" not in paths
+    assert "/sata11/my/dataset/c.mkv" not in paths
+
+
+def test_ls_skips_bad_rows(client):
+    client._http.post.return_value = _resp_mock("200", {"list": [
+        {"no": "name"},
+        _entry("ok", "/d/ok.mkv"),
+    ]})
+    res = client.ls("/d")
+    assert len(res) == 1
+    assert res[0].name == "ok"
+
+
 def test_search_skips_bad_rows(client):
     client._http.post.return_value = _resp_mock("200", {"list": [
         {"no": "name"},
@@ -323,3 +349,129 @@ def test_is_connected(client):
 
     with _p.object(_c, "check_client_running", return_value=True):
         assert client.is_connected() is True
+
+
+# --- retry on transient failures ---
+
+
+def test_post_retries_then_succeeds(client):
+    import httpx
+
+    calls = {"n": 0}
+
+    def flaky_post(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ConnectError("refused")
+        return _resp_mock("200", {"ok": True})
+
+    client._http.post.side_effect = flaky_post
+    body = client._post("/v2/file/list", {"path": "/"})
+    assert body["data"]["ok"] is True
+    assert calls["n"] == 2
+
+
+def test_post_retries_http_500(client):
+    import httpx
+
+    calls = {"n": 0}
+
+    def flaky_post(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            resp = MagicMock()
+            resp.status_code = 500
+            resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+                "server error", request=MagicMock(), response=resp
+            )
+            return resp
+        return _resp_mock("200", {"ok": True})
+
+    client._http.post.side_effect = flaky_post
+    client._post("/v2/file/list", {"path": "/"})
+    assert calls["n"] == 3
+
+
+def test_post_does_not_retry_http_404(client):
+    import httpx
+
+    calls = {"n": 0}
+
+    def bad_post(*args, **kwargs):
+        calls["n"] += 1
+        resp = MagicMock()
+        resp.status_code = 404
+        resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "not found", request=MagicMock(), response=resp
+        )
+        return resp
+
+    client._http.post.side_effect = bad_post
+    with pytest.raises(httpx.HTTPStatusError):
+        client._post("/v2/file/list", {"path": "/"})
+    assert calls["n"] == 1
+
+
+def test_post_does_not_retry_business_error(client):
+    calls = {"n": 0}
+
+    def bad_post(*args, **kwargs):
+        calls["n"] += 1
+        return _resp_mock("N001411", None, msg="无权限")
+
+    client._http.post.side_effect = bad_post
+    with pytest.raises(ZSpaceError):
+        client._post("/v2/file/list", {"path": "/"})
+    assert calls["n"] == 1
+
+
+def test_post_gives_up_after_max_retries(client):
+    import httpx
+
+    client._http.post.side_effect = httpx.ConnectError("refused")
+    with pytest.raises(httpx.ConnectError):
+        client._post("/v2/file/list", {"path": "/"})
+    assert client._http.post.call_count == client.max_retries + 1
+
+
+# --- progress callbacks ---
+
+
+def test_upload_reports_progress(client, tmp_path):
+    src = tmp_path / "hello.txt"
+    src.write_bytes(b"hello")
+
+    def fake_post(*args, **kwargs):
+        content = kwargs.get("content")
+        while content.read(1024 * 1024):
+            pass  # simulate httpx consuming the stream
+        return _resp_mock("200", {"name": "hello.txt"})
+
+    client._http.post.side_effect = fake_post
+    seen = []
+    client.upload(src, "/dst", progress=lambda done, total: seen.append((done, total)))
+    assert seen
+    assert seen[-1] == (5, 5)
+
+
+def test_download_reports_progress(client, tmp_path):
+    resp = MagicMock()
+    resp.raise_for_status.return_value = None
+    resp.headers = {"content-length": "10"}
+    resp.iter_bytes.return_value = iter([b"file-", b"bytes"])
+    client._http.stream.return_value.__enter__.return_value = resp
+    seen = []
+    out = client.download("/dst/hello.txt", tmp_path, progress=lambda d, t: seen.append((d, t)))
+    assert out.read_bytes() == b"file-bytes"
+    assert seen[-1] == (10, 10)
+
+
+def test_download_progress_without_content_length(client, tmp_path):
+    resp = MagicMock()
+    resp.raise_for_status.return_value = None
+    resp.headers = {}
+    resp.iter_bytes.return_value = iter([b"abc"])
+    client._http.stream.return_value.__enter__.return_value = resp
+    seen = []
+    client.download("/dst/a.txt", tmp_path, progress=lambda d, t: seen.append((d, t)))
+    assert seen[-1] == (3, 0)

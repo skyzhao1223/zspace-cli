@@ -197,3 +197,36 @@ def test_zspace_download():
     with patch("zspace_cli.mcp_server.ZSpaceClient", return_value=c):
         result = _run(m.zspace_download("/d/a.txt", "/tmp"))
     assert result["result"]["saved_to"] == "/tmp/a.txt"
+
+
+def test_zspace_ls_returns_error_struct():
+    from zspace_cli import mcp_server as m
+    from zspace_cli.client import ZSpaceError
+
+    c = _mock_client()
+    c.ls.side_effect = ZSpaceError("500", "ls blew up")
+    with patch("zspace_cli.mcp_server.ZSpaceClient", return_value=c):
+        r = _run(m.zspace_ls("/d"))
+    assert "error" in r
+    assert "ls blew up" in r["error"]
+
+
+def test_zspace_upload_missing_file_returns_error_struct():
+    from zspace_cli import mcp_server as m
+
+    c = _mock_client()
+    c.upload.side_effect = FileNotFoundError("本地文件不存在")
+    with patch("zspace_cli.mcp_server.ZSpaceClient", return_value=c):
+        r = _run(m.zspace_upload("/nope/x.mp4", "/d"))
+    assert "error" in r
+    assert "本地文件不存在" in r["error"]
+
+
+def test_zspace_info_unexpected_exception_returns_error_struct():
+    from zspace_cli import mcp_server as m
+
+    c = _mock_client()
+    c.info.side_effect = RuntimeError("boom")
+    with patch("zspace_cli.mcp_server.ZSpaceClient", return_value=c):
+        r = _run(m.zspace_info("/d/a"))
+    assert r == {"error": "boom"}
