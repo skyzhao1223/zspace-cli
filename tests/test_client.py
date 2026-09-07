@@ -154,7 +154,8 @@ def test_upload_posts_binary_with_path_header(client, tmp_path):
     _, kwargs = client._http.post.call_args
     headers = kwargs["headers"]
     assert headers["path"] == "/dst/hello.txt"
-    assert kwargs["content"] == b"hello"
+    # upload now streams the file object instead of buffering bytes
+    assert hasattr(kwargs["content"], "read")
 
 
 def test_upload_missing_local_file(client, tmp_path):
@@ -163,15 +164,15 @@ def test_upload_missing_local_file(client, tmp_path):
 
 
 def test_download_writes_file(client, tmp_path):
-    client._http.get.return_value = MagicMock(
-        raise_for_status=lambda: None,
-        content=b"file-bytes",
-    )
+    resp = MagicMock()
+    resp.raise_for_status.return_value = None
+    resp.iter_bytes.return_value = iter([b"file-", b"bytes"])
+    client._http.stream.return_value.__enter__.return_value = resp
     out = client.download("/dst/hello.txt", tmp_path)
     assert out.exists()
     assert out.read_bytes() == b"file-bytes"
     # request carries path and remote_port params
-    _, kwargs = client._http.get.call_args
+    _, kwargs = client._http.stream.call_args
     assert kwargs["params"]["path"] == "/dst/hello.txt"
 
 
@@ -308,7 +309,7 @@ def test_download_http_error(client, tmp_path):
 
     resp = MagicMock()
     resp.raise_for_status.side_effect = Exception("network down")
-    client._http.get.return_value = resp
+    client._http.stream.return_value.__enter__.return_value = resp
     import pytest as _p
 
     with _p.raises(Exception):

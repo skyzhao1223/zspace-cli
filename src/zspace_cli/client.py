@@ -277,7 +277,7 @@ class ZSpaceClient:
         with local.open("rb") as fh:
             resp = self._http.post(
                 self._url("/v2/file/create"),
-                content=fh.read(),
+                content=fh,  # stream the file — don't buffer GBs into memory
                 headers={
                     "Content-Type": "application/octet-stream",
                     "path": target,
@@ -299,13 +299,16 @@ class ZSpaceClient:
         dest = Path(local_dir)
         dest.mkdir(parents=True, exist_ok=True)
         name = local_name or Path(remote_path).name
-        resp = self._http.get(
+        out = dest / name
+        with self._http.stream(
+            "GET",
             self._url("/v2/file/download"),
             params={"path": remote_path, "remote_port": "8050"},
-        )
-        resp.raise_for_status()
-        out = dest / name
-        out.write_bytes(resp.content)
+        ) as resp:
+            resp.raise_for_status()
+            with out.open("wb") as fh:
+                for chunk in resp.iter_bytes():
+                    fh.write(chunk)
         return out
 
     def tree(self, path: str = "/sata11/my/data", max_depth: int = 2) -> list[dict[str, Any]]:

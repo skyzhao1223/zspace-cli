@@ -68,6 +68,9 @@ def check():
                 )
         except ZSpaceError:
             pass
+        except (KeyError, TypeError, ValueError):
+            # pool API responded but in an unexpected shape — degrade gracefully
+            console.print("  [dim](存储池信息解析失败)[/dim]")
 
 
 @app.command()

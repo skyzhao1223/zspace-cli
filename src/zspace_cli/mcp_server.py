@@ -15,7 +15,10 @@ from mcp.server import MCPServer
 
 from zspace_cli.client import ZSpaceClient, ZSpaceError
 
-_VENDOR_VERSION = _md.version("zspace-cli")
+try:
+    _VENDOR_VERSION = _md.version("zspace-cli")
+except _md.PackageNotFoundError:
+    _VENDOR_VERSION = "0.0.0"  # running from source without install
 
 server = MCPServer("zspace-nas", version=_VENDOR_VERSION)
 
