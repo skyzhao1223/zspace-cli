@@ -25,6 +25,17 @@ def _resp(code: str, data, msg: str = "ok"):
     return {"code": code, "msg": msg, "data": data}
 
 
+def _resp_mock(code: str, data, msg: str = "ok"):
+    """An httpx-like response mock with raise_for_status/json/content."""
+    from unittest.mock import MagicMock
+
+    r = MagicMock()
+    r.raise_for_status.return_value = None
+    r.json.return_value = _resp(code, data, msg)
+    r.content = b"payload"
+    return r
+
+
 def _entry(name: str, path: str, is_dir: str = "0", size: int = 10) -> dict:
     return {"name": name, "path": path, "is_dir": is_dir, "size": size}
 
@@ -172,3 +183,142 @@ def test_file_entry_from_api():
     e2 = FileEntry.from_api({"name": "b", "path": "/b", "is_dir": "0", "size": 5})
     assert e2.is_dir is False
     assert e2.size == 5
+
+
+# --- _post_with_array + move/copy/remove ---
+
+
+def test_post_with_array_builds_paths(client):
+    client._http.post.return_value = _resp_mock("200", {"ok": True})
+    body = client._post_with_array("/v2/file/move", ["/a", "/b"], {"to": "/d"})
+    assert body["data"]["ok"] is True
+    args, kwargs = client._http.post.call_args
+    assert "paths%5B%5D=%2Fa" in kwargs["content"]
+    assert "paths%5B%5D=%2Fb" in kwargs["content"]
+    assert "to=%2Fd" in kwargs["content"]
+
+
+def test_post_with_array_error_raises(client):
+    client._http.post.return_value = _resp_mock("500", {}, msg="move failed")
+    import pytest as _p
+
+    with _p.raises(ZSpaceError):
+        client._post_with_array("/v2/file/move", ["/a"], {"to": "/d"})
+
+
+def test_move_str_and_list(client):
+    client._http.post.return_value = _resp_mock("200", {})
+    client.move("/a", "/d")
+    client.move(["/b", "/c"], "/d")
+    assert client._http.post.call_count == 2
+
+
+def test_copy(client):
+    client._http.post.return_value = _resp_mock("200", {})
+    client.copy("/a", "/d")
+    args, _ = client._http.post.call_args
+    assert "/v2/file/copy" in args[0]
+
+
+def test_remove(client):
+    client._http.post.return_value = _resp_mock("200", {})
+    client.remove("/a")
+    args, _ = client._http.post.call_args
+    assert "/v2/file/remove" in args[0]
+
+
+def test_disk_stats(client):
+    client._http.post.return_value = _resp_mock("200", {"x": 1})
+    assert client.disk_stats()["data"]["x"] == 1
+
+
+def test_rename_and_mkdir(client):
+    client._http.post.return_value = _resp_mock("200", _entry("b", "/a/b"))
+    e = client.rename("/a", "b")
+    assert e.name == "b"
+    client._http.post.return_value = _resp_mock("200", _entry("new", "/d/new", is_dir="1"))
+    d = client.mkdir("/d", "new")
+    assert d.is_dir is True
+
+
+# --- search path filtering + bad rows ---
+
+
+def test_search_filters_by_path(client):
+    client._http.post.return_value = _resp_mock("200", {"list": [
+        _entry("x", "/sata11/my/data/影视/x.mkv"),
+        _entry("y", "/other/y.mkv"),
+    ]})
+    res = client.search("x", path="/sata11/my/data")
+    assert len(res) == 1
+    assert res[0].path.startswith("/sata11/my/data")
+
+
+def test_search_skips_bad_rows(client):
+    client._http.post.return_value = _resp_mock("200", {"list": [
+        {"no": "name"},
+        _entry("ok", "/a/ok.mkv"),
+    ]})
+    res = client.search("ok", path="")
+    assert len(res) == 1
+    assert res[0].name == "ok"
+
+
+# --- tree / _tree_walk ---
+
+
+def test_tree_walk_respects_depth(client):
+    client._http.post.return_value = _resp_mock("200", {"list": [
+        _entry("sub", "/d/sub", is_dir="1"),
+        _entry("f.txt", "/d/f.txt", size=5),
+    ]})
+    nodes = client.tree("/d", max_depth=1)
+    assert any(n["name"] == "sub" and n["depth"] == 0 for n in nodes)
+    assert any(n["name"] == "f.txt" and "size" in n for n in nodes)
+
+
+def test_tree_walk_stops_at_depth(client):
+    client._http.post.return_value = _resp_mock("200", {"list": [
+        _entry("sub", "/d/sub", is_dir="1"),
+    ]})
+    client.tree("/d", max_depth=0)
+    assert client._http.post.call_count == 0  # never called at depth 0
+
+
+def test_tree_walk_ignores_ls_error(client):
+    client._http.post.return_value = _resp_mock("500", {}, msg="boom")
+    assert client.tree("/d", max_depth=2) == []
+
+
+# --- upload/download error paths ---
+
+
+def test_upload_api_error(client, tmp_path):
+    local = tmp_path / "x.txt"
+    local.write_text("hi")
+    client._http.post.return_value = _resp_mock("500", {}, msg="upload failed")
+    import pytest as _p
+
+    with _p.raises(ZSpaceError):
+        client.upload(local, "/d")
+
+
+def test_download_http_error(client, tmp_path):
+    from unittest.mock import MagicMock
+
+    resp = MagicMock()
+    resp.raise_for_status.side_effect = Exception("network down")
+    client._http.get.return_value = resp
+    import pytest as _p
+
+    with _p.raises(Exception):
+        client.download("/a", tmp_path)
+
+
+def test_is_connected(client):
+    from unittest.mock import patch as _p
+
+    from zspace_cli import client as _c
+
+    with _p.object(_c, "check_client_running", return_value=True):
+        assert client.is_connected() is True

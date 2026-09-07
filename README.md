@@ -1,6 +1,7 @@
 # zspace-cli
 
 [![skyzhao1223/zspace-cli MCP server](https://glama.ai/mcp/servers/skyzhao1223/zspace-cli/badges/score.svg)](https://glama.ai/mcp/servers/skyzhao1223/zspace-cli)
+[![CI](https://github.com/skyzhao1223/zspace-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/skyzhao1223/zspace-cli/actions/workflows/ci.yml)
 
 Manage your 极空间 (ZSpace) NAS from the terminal or AI agents — **no password, no SSH, no DDNS**.
 

@@ -39,7 +39,9 @@ mcp = ["mcp>=2.0; python_version >= '3.10'"]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
+    "pytest-cov>=5.0",
     "ruff>=0.4",
+    "pyright>=1.1.380",
 ]
 
 [project.urls]
@@ -70,3 +72,14 @@ select = ["E", "F", "I", "N", "W", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+addopts = "--cov=src/zspace_cli --cov-report=term-missing --cov-fail-under=80"
+
+[tool.coverage.run]
+branch = true
+source = ["src/zspace_cli"]
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.9"
+typeCheckingMode = "basic"
+reportMissingTypeStubs = "none"
