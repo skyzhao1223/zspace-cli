@@ -57,10 +57,10 @@ def _client() -> ZSpaceClient:
             return ZSpaceClient(config_dir=_config_dir)
         return ZSpaceClient()
     except FileNotFoundError as e:
-        console.print(f"[red]✗[/red] {e}")
+        console.print(f"[red]![/red] {e}")
         raise typer.Exit(1)
     except Exception as e:
-        console.print(f"[red]✗ 连接失败:[/red] {e}")
+        console.print(f"[red]! 连接失败:[/red] {e}")
         raise typer.Exit(1)
 
 
@@ -80,10 +80,10 @@ def check():
     with _client() as c:
         status = c.client_status()
         if not status.ok:
-            console.print(f"[red]✗[/red] {status.reason}")
+            console.print(f"[red]![/red] {status.reason}")
             raise typer.Exit(1)
 
-        console.print("[green]✓ 极空间客户端已连接[/green]")
+        console.print("[green]OK 极空间客户端已连接[/green]")
         try:
             pool = c.pool_info()
             for p in pool["data"]["pool_list"]:
@@ -114,7 +114,7 @@ def ls(
         try:
             entries = c.ls(path, show_hidden=hidden)
         except ZSpaceError as e:
-            console.print(f"[red]✗[/red] {e}")
+            console.print(f"[red]![/red] {e}")
             raise typer.Exit(1)
 
         if long:
@@ -124,7 +124,7 @@ def ls(
             table.add_column("名称")
             table.add_column("路径", style="dim")
             for e in entries:
-                icon = "📁" if e.is_dir else "📄"
+                icon = "DIR" if e.is_dir else "FILE"
                 size = "" if e.is_dir else _size_str(e.size)
                 table.add_row(icon, size, e.name, e.path)
             console.print(table)
@@ -145,7 +145,7 @@ def info(path: str = typer.Argument(..., help="文件或目录路径")):
         try:
             data = c.info(path)
         except ZSpaceError as e:
-            console.print(f"[red]✗[/red] {e}")
+            console.print(f"[red]![/red] {e}")
             raise typer.Exit(1)
 
         table = Table(box=box.ROUNDED, show_header=False, title=data.get("name", path))
@@ -171,9 +171,9 @@ def rename(
     with _client() as c:
         try:
             result = c.rename(path, new_name)
-            console.print(f"[green]✓[/green] 已重命名为 [bold]{result.name}[/bold]")
+            console.print(f"[green]OK[/green] 已重命名为 [bold]{result.name}[/bold]")
         except ZSpaceError as e:
-            console.print(f"[red]✗[/red] {e}")
+            console.print(f"[red]![/red] {e}")
             raise typer.Exit(1)
 
 
@@ -186,9 +186,9 @@ def mv(
     with _client() as c:
         try:
             c.move(src, dest)
-            console.print(f"[green]✓[/green] 已移动到 [bold]{dest}[/bold]")
+            console.print(f"[green]OK[/green] 已移动到 [bold]{dest}[/bold]")
         except ZSpaceError as e:
-            console.print(f"[red]✗[/red] {e}")
+            console.print(f"[red]![/red] {e}")
             raise typer.Exit(1)
 
 
@@ -201,9 +201,9 @@ def cp(
     with _client() as c:
         try:
             c.copy(src, dest)
-            console.print(f"[green]✓[/green] 复制到 [bold]{dest}[/bold]")
+            console.print(f"[green]OK[/green] 复制到 [bold]{dest}[/bold]")
         except ZSpaceError as e:
-            console.print(f"[red]✗[/red] {e}")
+            console.print(f"[red]![/red] {e}")
             raise typer.Exit(1)
 
 
@@ -216,9 +216,9 @@ def mkdir(
     with _client() as c:
         try:
             result = c.mkdir(parent, name)
-            console.print(f"[green]✓[/green] 已创建 [bold]{result.path}[/bold]")
+            console.print(f"[green]OK[/green] 已创建 [bold]{result.path}[/bold]")
         except ZSpaceError as e:
-            console.print(f"[red]✗[/red] {e}")
+            console.print(f"[red]![/red] {e}")
             raise typer.Exit(1)
 
 
@@ -236,9 +236,9 @@ def rm(
     with _client() as c:
         try:
             c.remove(path)
-            console.print("[green]✓[/green] 已删除")
+            console.print("[green]OK[/green] 已删除")
         except ZSpaceError as e:
-            console.print(f"[red]✗[/red] {e}")
+            console.print(f"[red]![/red] {e}")
             raise typer.Exit(1)
 
 
@@ -252,7 +252,7 @@ def find(
         try:
             results = c.search(keyword, path)
         except ZSpaceError as e:
-            console.print(f"[red]✗[/red] {e}")
+            console.print(f"[red]![/red] {e}")
             raise typer.Exit(1)
 
         if not results:
@@ -260,7 +260,7 @@ def find(
             return
 
         for e in results:
-            icon = "📁" if e.is_dir else "📄"
+            icon = "DIR" if e.is_dir else "FILE"
             console.print(f"  {icon} {e.path}")
         console.print(f"\n[dim]找到 {len(results)} 项[/dim]")
 
@@ -275,7 +275,7 @@ def tree(
         try:
             nodes = c.tree(path, max_depth=depth)
         except ZSpaceError as e:
-            console.print(f"[red]✗[/red] {e}")
+            console.print(f"[red]![/red] {e}")
             raise typer.Exit(1)
 
         root_name = path.rsplit("/", 1)[-1] or path
@@ -337,12 +337,12 @@ def up(
                     ),
                 )
                 target = result.get("path", f"{remote_dir.rstrip('/')}/{local.name}")
-                console.print(f"[green]✓[/green] 已上传到 [bold]{target}[/bold]")
+                console.print(f"[green]OK[/green] 已上传到 [bold]{target}[/bold]")
             except ZSpaceError as e:
-                console.print(f"[red]✗[/red] {e}")
+                console.print(f"[red]![/red] {e}")
                 raise typer.Exit(1)
             except FileNotFoundError as e:
-                console.print(f"[red]✗[/red] {e}")
+                console.print(f"[red]![/red] {e}")
                 raise typer.Exit(1)
 
 
@@ -365,9 +365,9 @@ def down(
                         task, completed=done, total=total or None
                     ),
                 )
-                console.print(f"[green]✓[/green] 已下载到 [bold]{out}[/bold]")
+                console.print(f"[green]OK[/green] 已下载到 [bold]{out}[/bold]")
             except ZSpaceError as e:
-                console.print(f"[red]✗[/red] {e}")
+                console.print(f"[red]![/red] {e}")
                 raise typer.Exit(1)
 
 
@@ -385,7 +385,7 @@ def skill(
     data_root = Path(__file__).resolve().parent / "skills"
     if not data_root.is_dir():
         console.print(
-            "[red]✗[/red] 未找到 skills 数据目录（请确认已通过 pip 安装 zspace-cli）"
+            "[red]![/red] 未找到 skills 数据目录（请确认已通过 pip 安装 zspace-cli）"
         )
         raise typer.Exit(1)
 
@@ -406,7 +406,7 @@ def skill(
         else:
             shutil.copy2(item, dest)
         copied += 1
-    console.print(f"[green]✓[/green] 已复制 {copied} 个 skill 到 [bold]{target}[/bold]")
+    console.print(f"[green]OK[/green] 已复制 {copied} 个 skill 到 [bold]{target}[/bold]")
     console.print("  对 Agent 说「列出 NAS 文件」即可使用。")
 
 

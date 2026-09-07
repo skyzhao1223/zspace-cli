@@ -103,7 +103,7 @@ def load_credentials(config_dir: Path | str | None = None) -> Credentials:
         if cached is not None and cached[:2] == stamp:
             return cached[2]
 
-    data = json.loads(vuex_path.read_text(encoding="utf-8"))
+    data = json.loads(vuex_path.read_text(encoding="utf-8-sig"))
 
     state = data.get("state", data)
     user = state["user"]

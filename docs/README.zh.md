@@ -135,6 +135,9 @@ ZS_CONFIG_DIR=~/path/to/zspace-config zs check   # 或环境变量
 
 > Windows/Linux 配置路径是尽力猜测（未经真实客户端验证）。若自动探测不到你的路径，请开 issue 附上实际路径，便于补充。
 
+> **Windows ARM64**：`[mcp]` 的部分依赖（如 `cryptography`）并非每个版本都提供 ARM64 wheel，直接 `pip install "zspace-cli[mcp]"` 可能从源码编译（很慢，无 Rust 会失败）。建议强制使用预编译 wheel：
+> `pip install --only-binary=:all: "zspace-cli[mcp]"`。
+
 ### 可选：MCP 配置
 
 ```json

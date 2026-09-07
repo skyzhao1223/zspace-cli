@@ -142,6 +142,20 @@ def test_locate_config_tries_candidates(monkeypatch, tmp_path):
     assert found.token == "tok-123"
 
 
+def test_load_credentials_tolerates_utf8_bom(tmp_path):
+    # Windows tooling often writes JSON with a UTF-8 BOM
+    payload = json.dumps({
+        "state": {
+            "user": {"token": "tok-bom"},
+            "nas": {"nasId": "N"},
+            "app": {"deviceId": "d"},
+        }
+    })
+    (tmp_path / "vuex.json").write_bytes(b"\xef\xbb\xbf" + payload.encode("utf-8"))
+    creds = load_credentials(tmp_path)
+    assert creds.token == "tok-bom"
+
+
 def test_client_status_ok(monkeypatch):
     class _Resp:
         status_code = 200

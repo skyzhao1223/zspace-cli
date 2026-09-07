@@ -138,6 +138,11 @@ ZS_CONFIG_DIR=~/path/to/zspace-config zs check   # or as an env var
 > a real client). If auto-detection misses yours, please open an issue with the
 > actual path so it can be added.
 
+> **Windows on ARM** — some `[mcp]` dependencies (e.g. `cryptography`) don't ship
+> ARM64 wheels for every version, so `pip install "zspace-cli[mcp]"` may try to
+> build them from source (slow, or fails without Rust). Force prebuilt wheels:
+> `pip install --only-binary=:all: "zspace-cli[mcp]"`.
+
 ### MCP configuration (optional)
 
 ```json
