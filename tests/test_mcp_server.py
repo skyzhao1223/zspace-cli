@@ -1,6 +1,7 @@
 """Tests for zspace_cli.mcp_server — MCP tool functions with a mocked client."""
 
 import asyncio
+
 import pytest
 
 pytest.importorskip("mcp", reason="mcp extra requires Python 3.10+")
