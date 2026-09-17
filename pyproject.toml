@@ -48,10 +48,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/skyzhao/zspace-cli"
-Documentation = "https://github.com/skyzhao/zspace-cli#readme"
-Repository = "https://github.com/skyzhao/zspace-cli"
-Issues = "https://github.com/skyzhao/zspace-cli/issues"
+Homepage = "https://github.com/skyzhao1223/zspace-cli"
+Documentation = "https://github.com/skyzhao1223/zspace-cli#readme"
+Repository = "https://github.com/skyzhao1223/zspace-cli"
+Issues = "https://github.com/skyzhao1223/zspace-cli/issues"
 
 [project.scripts]
 zs = "zspace_cli.cli:app"
