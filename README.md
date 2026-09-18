@@ -17,6 +17,10 @@ Manage your 极空间 (ZSpace) NAS from the terminal or AI agents — **no passw
 
 [Skills](skills/README.md) · [中文文档](docs/README.zh.md)
 
+<p align="center">
+  <img src="docs/assets/demo.gif" alt="zspace-cli terminal demo" width="720">
+</p>
+
 ---
 
 ## Install

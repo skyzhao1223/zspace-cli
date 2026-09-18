@@ -17,6 +17,10 @@
 
 [Skills 说明](../skills/README.md) · [English README](../README.md)
 
+<p align="center">
+  <img src="assets/demo.gif" alt="zspace-cli 终端演示" width="720">
+</p>
+
 ---
 
 ## 安装
