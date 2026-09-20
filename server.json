@@ -3,7 +3,7 @@
   "name": "io.github.skyzhao1223/zspace-cli",
   "title": "zspace-cli",
   "description": "Zero-config MCP server + CLI for ZSpace NAS: manage files and pool stats via desktop client proxy.",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "repository": {
     "url": "https://github.com/skyzhao1223/zspace-cli",
     "source": "github"
@@ -12,7 +12,7 @@
     {
       "registryType": "pypi",
       "identifier": "zspace-cli",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "transport": {
         "type": "stdio",
         "command": "zs-mcp"

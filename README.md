@@ -13,6 +13,8 @@
 
 Manage your 极空间 (ZSpace) NAS from the terminal or AI agents — **no password, no SSH, no DDNS**.
 
+mcp-name: io.github.skyzhao1223/zspace-cli
+
 > Just keep the ZSpace desktop client logged in on macOS.
 
 [Skills](skills/README.md) · [中文文档](docs/README.zh.md)
