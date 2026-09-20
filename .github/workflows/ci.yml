@@ -47,6 +47,25 @@ jobs:
         run: |
           pip install "ruff>=0.11"
           ruff check skills
+      - name: Verify packaged skill copies are in sync
+        run: |
+          fail=0
+          for d in skills/*/; do
+            n=$(basename "$d")
+            if ! diff -rq -x __pycache__ "$d" "src/zspace_cli/skills/$n" >/dev/null 2>&1; then
+              echo "OUT OF SYNC: $n"
+              fail=1
+            fi
+          done
+          diff -q skills/README.md src/zspace_cli/skills/README.md >/dev/null || {
+            echo "OUT OF SYNC: README.md"
+            fail=1
+          }
+          if [ $fail -ne 0 ]; then
+            echo "Run the sync command in CONTRIBUTING.md → 'Skills live in two places'"
+            exit 1
+          fi
+          echo "all skill copies in sync"
       - name: Smoke tests (offline fixtures, py3.9 = min supported)
         run: |
           for d in skills/*/; do
