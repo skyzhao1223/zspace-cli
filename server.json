@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.skyzhao1223/zspace-cli",
   "title": "zspace-cli",
-  "description": "Zero-config MCP server + CLI for ZSpace NAS: manage files and pool stats via desktop client proxy.",
-  "version": "0.1.4",
+  "description": "Zero-config MCP server + CLI for ZSpace NAS: file ops and pool stats via desktop client proxy. Ships 9 Agent skills, incl. 8 cross-NAS organizers (storage report, photo/music/work/portfolio, downloads, dedup, backup audit).",
+  "version": "0.1.5",
   "repository": {
     "url": "https://github.com/skyzhao1223/zspace-cli",
     "source": "github"
@@ -12,7 +12,7 @@
     {
       "registryType": "pypi",
       "identifier": "zspace-cli",
-      "version": "0.1.4",
+      "version": "0.1.5",
       "transport": {
         "type": "stdio",
         "command": "zs-mcp"

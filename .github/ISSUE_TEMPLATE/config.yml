@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 新手指南 / Beginner Guide
+    url: https://github.com/skyzhao1223/zspace-cli/blob/main/docs/beginner-guide.zh.md
+    about: 第一次使用？先跟指南走一遍（零代码基础）/ First time? Walk through the guide first
