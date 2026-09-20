@@ -1,5 +1,7 @@
 # Skills（Agent 工作流）
 
+> 👋 第一次接触「挂载」「AI 助手」「skill」这些词？先读[《新手指南》](../docs/beginner-guide.zh.md)——零代码基础，手把手装好（[English](../docs/beginner-guide.md)）。
+
 把这些 Skill 复制到你的 Agent 项目后，用自然语言就能整理你的 NAS。两类定位：
 
 - **`zspace-nas`**：极空间**零配置底座**——读桌面客户端登录态直连 API，无需挂载、无需密码
