@@ -248,8 +248,8 @@ zspace-cli/
 │   ├── client.py      # ZSpaceClient SDK (retry / stream / progress)
 │   ├── auth.py        # vuex.json auto-detection + credential cache
 │   ├── mcp_server.py  # MCP tools (zs-mcp)
-│   └── skills/        # Agent skills shipped inside the wheel
-├── skills/            # Skill docs + sources
+│   └── skills/        # packaged skill copies shipped in the wheel (keep in sync!)
+├── skills/            # skill sources — the source of truth (edit here)
 ├── scripts/mcp_smoke.py
 ├── tests/             # pytest (CLI + SDK + MCP + auth)
 └── promo/             # launch/promo material (submodule)
@@ -274,7 +274,10 @@ Pair zspace-cli with [Jellyfin / Emby / MoviePilot / MCP clients / Docker](docs/
 
 ## Contributing
 
-Open an issue first to discuss changes. PRs welcome.
+Open an issue first to discuss changes. PRs welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, quality gates, and the
+skill-authoring guide (including the `skills/` ↔ `src/zspace_cli/skills/`
+dual-copy sync rule that CI enforces).
 
 ## License
 

@@ -236,8 +236,8 @@ zspace-cli/
 │   ├── client.py      # ZSpaceClient SDK（重试 / 流式 / 进度）
 │   ├── auth.py        # vuex.json 自动探测 + 凭据缓存
 │   ├── mcp_server.py  # MCP tools（zs-mcp）
-│   └── skills/        # 打包进 wheel 的 Agent skills
-├── skills/            # Skill 文档与源
+│   └── skills/        # 打包进 wheel 的副本（必须与源同步！）
+├── skills/            # Skill 源（唯一事实源，在这里改）
 ├── scripts/mcp_smoke.py
 ├── tests/             # pytest（CLI + SDK + MCP + auth）
 └── promo/             # 发布/推广材料（submodule）
@@ -262,7 +262,9 @@ zspace-cli/
 
 ## 贡献
 
-先开 issue 讨论再改。欢迎 PR。
+先开 issue 讨论再改。欢迎 PR——开发环境、质量门槛、新 skill 编写指南
+（含 `skills/` ↔ `src/zspace_cli/skills/` 双副本同步规则，CI 会强制校验）
+见 [CONTRIBUTING.md](../CONTRIBUTING.md)。
 
 ## 许可证
 
