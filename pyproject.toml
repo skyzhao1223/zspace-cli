@@ -85,6 +85,10 @@ addopts = "--cov=src/zspace_cli --cov-report=term-missing --cov-fail-under=75 -n
 branch = true
 source = ["src/zspace_cli"]
 parallel = true
+# Skill scripts ship inside the wheel as data for `zs skill`; they are
+# standalone CLIs exercised by their own smoke.sh, not imported by the test
+# suite — keep them out of coverage.
+omit = ["src/zspace_cli/skills/*"]
 
 [tool.pyright]
 include = ["src"]

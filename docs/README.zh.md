@@ -62,7 +62,22 @@ zs skill ~/your-project/.cursor/skills/   # Cursor
 zs skill ~/your-project/skills/           # Claude Code 等（可复制到多个项目）
 ```
 
-复制后，直接对你的 Agent 说「列出 NAS `/sata11/my/data` 里的文件」即可。Skills 清单见 [skills/README.md](../skills/README.md)。
+复制后，直接对你的 Agent 说「列出 NAS `/sata11/my/data` 里的文件」即可。
+
+除了 `zspace-nas`（极空间零配置文件操作底座），`zs skill` 还会装上**一整套 8 个跨 NAS 整理 skill**。它们的扫描脚本纯 stdlib 零依赖，跑在任意**挂载路径**（SMB/NFS）上——极空间 / 群晖 / 威联通 / 绿联等只要能挂载就能用。全部遵循同一套只读模式：**扫描 → LLM 出 old→new 计划 → 用户确认 → Agent 执行**（删除一律先隔离再真删）。
+
+| Skill | 能做什么 |
+|-------|----------|
+| **nas-report** | 🧭 入口/元技能：全盘存储画像 + 按发现路由到专项 skill |
+| **photo-organizer** | 照片/视频：按拍摄日期归档、截图/微信图识别、连拍去重 |
+| **music-organizer** | 音乐库：歌手/专辑/曲目三层结构、曲目号、封面、内置 ID3v2 解析对照标签 |
+| **work-organizer** | 工作文件：散文件归档、版本混乱、副本清理、过期归档 |
+| **portfolio-organizer** | 作品集：项目结构、封面/说明、成品与源文件分离 |
+| **download-cleaner** | 下载区：分诊清理（未完成/种子/安装包/压缩包/待归档媒体） |
+| **dedup-finder** | 内容级**精确**去重（三级指纹 size→头部→全量 sha1，零误报） |
+| **backup-auditor** | 备份健康审计：版本轮转、陈旧检测、关键目录覆盖核对 |
+
+建议先跑 `nas-report` 看清全局，再按它的建议跑对应专项 skill。完整清单见 [skills/README.md](../skills/README.md)。影视库命名是独立项目：[media-manager-skill](https://github.com/skyzhao1223/media-manager-skill)。
 
 ---
 

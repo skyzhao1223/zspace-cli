@@ -108,9 +108,22 @@ zs skill ~/your-project/.cursor/skills/   # Cursor
 # zs skill ~/your-project/skills/         # Claude Code, etc.
 ```
 
-Then tell your agent things like "list the files in `/sata11/my/data`". See [skills/README.md](skills/README.md) for the full skill list.
+Then tell your agent things like "list the files in `/sata11/my/data`". The skills ship inside the wheel, so `zs skill` works on any machine that has `zspace-cli` installed.
 
-The skills ship inside the wheel, so `zs skill` works on any machine that has `zspace-cli` installed.
+Besides `zspace-nas` (the zero-config base for ZSpace file ops), `zs skill` installs a family of **8 cross-NAS organizer skills**. Their scanners are pure-stdlib and run on any **mounted** path (SMB/NFS), so they work with ZSpace, Synology, QNAP, UGREEN, etc. All follow the same read-only pattern: **scan → the LLM drafts an old→new plan → you confirm → the agent executes** (deletes always quarantine first).
+
+| Skill | What it does |
+|-------|--------------|
+| **nas-report** | 🧭 Entry point: whole-disk storage profile + routes you to the right specialist skill |
+| **photo-organizer** | Photos/videos: file by shoot date, screenshots/WeChat images, burst de-dup |
+| **music-organizer** | Music: Artist/Album/Track structure, track numbers, covers, built-in ID3v2 parsing |
+| **work-organizer** | Work files: archive loose files, version chaos, copies, stale-file archiving |
+| **portfolio-organizer** | Portfolio: project structure, cover/README, separate finals from sources |
+| **download-cleaner** | Downloads: triage & clean (partials/torrents/installers/archives/unsorted media) |
+| **dedup-finder** | Content-level exact de-dup (3-stage fingerprint size→head→full sha1, zero false positives) |
+| **backup-auditor** | Backup health: version rotation, staleness, coverage check |
+
+Start with `nas-report` to see the big picture, then run whichever specialist it recommends. See [skills/README.md](skills/README.md) for the full list. Media-library naming stays a separate project: [media-manager-skill](https://github.com/skyzhao1223/media-manager-skill).
 
 ---
 
