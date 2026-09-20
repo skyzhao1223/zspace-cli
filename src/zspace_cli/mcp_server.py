@@ -139,7 +139,9 @@ async def zspace_disk_stats() -> dict[str, Any]:
     annotations=_READ_ONLY,
 )
 async def zspace_ls(
-    path: Annotated[str, Field(description="Absolute path on the NAS, e.g. /sata11/my/data")] = "/sata11/my/data",
+    path: Annotated[
+        str, Field(description="Absolute path on the NAS, e.g. /sata11/my/data")
+    ] = "/sata11/my/data",
     show_hidden: Annotated[bool, Field(description="Include hidden files and directories")] = False,
 ) -> dict[str, Any]:
     """List the contents of a directory on the ZSpace NAS at the given path.
@@ -171,7 +173,13 @@ async def zspace_ls(
     annotations=_READ_ONLY,
 )
 async def zspace_info(
-    path: Annotated[str, Field(description="Absolute path of the file or directory to inspect, e.g. /sata11/my/data/影视")],
+    path: Annotated[
+        str,
+        Field(
+            description="Absolute path of the file or directory to inspect, "
+            "e.g. /sata11/my/data/影视"
+        ),
+    ],
 ) -> dict[str, Any]:
     """Return detailed metadata for one file or directory on the ZSpace NAS.
 
@@ -189,7 +197,13 @@ async def zspace_info(
     annotations=_OPEN_WORLD,
 )
 async def zspace_rename(
-    path: Annotated[str, Field(description="Absolute path of the file or directory to rename, e.g. /sata11/my/data/old")],
+    path: Annotated[
+        str,
+        Field(
+            description="Absolute path of the file or directory to rename, "
+            "e.g. /sata11/my/data/old"
+        ),
+    ],
     new_name: Annotated[str, Field(description="New name (basename only), e.g. newname.mkv")],
 ) -> dict[str, Any]:
     """Rename one file or directory on the ZSpace NAS, keeping it in place.
@@ -209,7 +223,9 @@ async def zspace_rename(
     annotations=_OPEN_WORLD,
 )
 async def zspace_mkdir(
-    parent: Annotated[str, Field(description="Absolute path of the parent directory, e.g. /sata11/my/data")],
+    parent: Annotated[
+        str, Field(description="Absolute path of the parent directory, e.g. /sata11/my/data")
+    ],
     name: Annotated[str, Field(description="Name of the new directory (basename only)")],
 ) -> dict[str, Any]:
     """Create a new directory on the ZSpace NAS under the given parent.
@@ -307,7 +323,9 @@ async def zspace_remove(
 )
 async def zspace_search(
     keyword: Annotated[str, Field(description="Keyword to match against file names")],
-    path: Annotated[str, Field(description="Directory to search under, e.g. /sata11/my/data")] = "/sata11/my/data",
+    path: Annotated[
+        str, Field(description="Directory to search under, e.g. /sata11/my/data")
+    ] = "/sata11/my/data",
 ) -> dict[str, Any]:
     """Search for files/directories on the NAS whose names contain the keyword.
 
@@ -331,8 +349,12 @@ async def zspace_search(
     annotations=_READ_ONLY,
 )
 async def zspace_tree(
-    path: Annotated[str, Field(description="Root directory to show as a tree, e.g. /sata11/my/data")] = "/sata11/my/data",
-    depth: Annotated[int, Field(description="Maximum recursion depth (1 = current level only)")] = 2,
+    path: Annotated[
+        str, Field(description="Root directory to show as a tree, e.g. /sata11/my/data")
+    ] = "/sata11/my/data",
+    depth: Annotated[
+        int, Field(description="Maximum recursion depth (1 = current level only)")
+    ] = 2,
 ) -> dict[str, Any]:
     """Return a nested tree view of a directory on the ZSpace NAS.
 
@@ -351,8 +373,13 @@ async def zspace_tree(
 )
 async def zspace_upload(
     local_path: Annotated[str, Field(description="Local filesystem path of the file to upload")],
-    remote_dir: Annotated[str, Field(description="Destination directory on the NAS (absolute path)")],
-    new_name: Annotated[str | None, Field(description="Optional remote file name; defaults to the local basename")] = None,
+    remote_dir: Annotated[
+        str, Field(description="Destination directory on the NAS (absolute path)")
+    ],
+    new_name: Annotated[
+        str | None,
+        Field(description="Optional remote file name; defaults to the local basename"),
+    ] = None,
 ) -> dict[str, Any]:
     """Upload a file from the local machine to a directory on the ZSpace NAS.
 
@@ -371,8 +398,12 @@ async def zspace_upload(
     annotations=_READ_ONLY,
 )
 async def zspace_download(
-    remote_path: Annotated[str, Field(description="Absolute path of the file on the NAS to download")],
-    local_dir: Annotated[str, Field(description="Local directory to save the file into (defaults to current dir)")] = ".",
+    remote_path: Annotated[
+        str, Field(description="Absolute path of the file on the NAS to download")
+    ],
+    local_dir: Annotated[
+        str, Field(description="Local directory to save the file into (defaults to current dir)")
+    ] = ".",
 ) -> dict[str, Any]:
     """Download a file from the ZSpace NAS to a local directory.
 
