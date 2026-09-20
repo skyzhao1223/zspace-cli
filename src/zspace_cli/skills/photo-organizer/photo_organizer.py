@@ -192,7 +192,7 @@ class Scanner:
 
     # -- 遍历 ----------------------------------------------------------
 
-    def _walk(self, dir_path: Path, rel_parts: list[str]) -> None:
+    def _walk(self, dir_path: Path | str, rel_parts: list[str]) -> None:
         if len(rel_parts) > self.max_depth:
             return
         try:
@@ -378,7 +378,7 @@ class Scanner:
         }
 
 
-def _human_size(n: int) -> str:
+def _human_size(n: float) -> str:
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if n < 1024 or unit == "TB":
             return f"{n:.1f} {unit}" if unit != "B" else f"{n} B"

@@ -199,7 +199,7 @@ class Scanner:
 
     # -- 遍历 ----------------------------------------------------------
 
-    def _walk(self, dir_path: Path, rel_parts: list[str],
+    def _walk(self, dir_path: Path | str, rel_parts: list[str],
               artist: Artist | None, album: Album | None) -> None:
         if len(rel_parts) > self.max_depth:
             return

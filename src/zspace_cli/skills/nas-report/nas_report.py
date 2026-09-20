@@ -99,7 +99,7 @@ class Reporter:
         e["count"] += 1
         e["size"] += size
 
-    def _walk(self, dir_path: Path, rel_parts: list[str], top_key: str | None,
+    def _walk(self, dir_path: Path | str, rel_parts: list[str], top_key: str | None,
               ) -> tuple[int, int]:
         """返回 (子树字节数, 子树文件数);用于顶层目录汇总与大目录榜。"""
         if len(rel_parts) > self.max_depth:

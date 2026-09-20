@@ -85,7 +85,7 @@ def parse_backup_name(name: str) -> tuple[str, str | None, int | None]:
     return base_key or stem.lower(), date, version
 
 
-def dir_size(path: Path, max_files: int = 20000) -> tuple[int, int]:
+def dir_size(path: Path | str, max_files: int = 20000) -> tuple[int, int]:
     """递归求目录 (字节数, 文件数);带文件数上限防止超大目录卡死。"""
     total, count = 0, 0
     stack = [path]

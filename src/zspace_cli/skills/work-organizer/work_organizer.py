@@ -154,7 +154,7 @@ class Scanner:
 
     # -- 遍历 ----------------------------------------------------------
 
-    def _walk(self, dir_path: Path, rel_parts: list[str]) -> None:
+    def _walk(self, dir_path: Path | str, rel_parts: list[str]) -> None:
         if len(rel_parts) > self.max_depth:
             return
         try:
@@ -268,7 +268,7 @@ class Scanner:
             problems.append("缺日期前缀(建议 YYYYMMDD_项目_主题_vN)")
 
         if problems:
-            extra = {"size": size}
+            extra: dict[str, object] = {"size": size}
             if mtime_date:
                 extra["mtime"] = mtime_date
                 if not rel_parts:
