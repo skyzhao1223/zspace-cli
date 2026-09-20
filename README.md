@@ -73,7 +73,7 @@ with ZSpaceClient() as zs:
 | `zs tree [path]` | Tree view (`-d/--depth N`, default 2) |
 | `zs up <local> <remote_dir>` | Upload (`-n/--name` to rename remotely) |
 | `zs down <path> [dir]` | Download |
-| `zs skill <dir>` | Copy Agent skills into a project |
+| `zs skill <dir>` | Copy Agent skills into a project (`--list`, `--only a,b`) |
 | `zs --config-dir <dir>` | Point at a non-default `vuex.json` location (or `ZS_CONFIG_DIR`) |
 
 `zs check`, `zs ls`, `zs info`, `zs find`, `zs tree` accept `--json` for

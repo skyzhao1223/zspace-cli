@@ -99,7 +99,7 @@ zs skill ~/your-project/skills/ --only nas-report,photo-organizer   # 或按需�
 | `zs tree [path]` | 树形浏览（`-d/--depth N`，默认 2） |
 | `zs up <local> <remote_dir>` | 上传（`-n/--name` 指定远端文件名） |
 | `zs down <path> [dir]` | 下载 |
-| `zs skill <dir>` | 把 Agent skills 复制到项目目录 |
+| `zs skill <dir>` | 把 Agent skills 复制到项目目录（`--list` 列出 / `--only` 选装） |
 | `zs --config-dir <dir>` | 指定非默认 `vuex.json` 位置（或环境变量 `ZS_CONFIG_DIR`） |
 
 `zs check`、`zs ls`、`zs info`、`zs find`、`zs tree` 支持 `--json` 机器可读输出；`zs mv`/`zs cp`/`zs rm`/`zs down` 的源路径支持 `* ?` glob 通配。

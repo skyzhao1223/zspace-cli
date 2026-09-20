@@ -29,7 +29,9 @@ watcher). zspace-cli's job is done — naming is now library-friendly.
 
 These scrapers watch download folders and rename on their own. zspace-cli can
 prepare a clean **staging** area so they don't choke on download residue
-(`.bt.td`, `!qB`, part files):
+(`.bt.td`, `!qB`, part files). The bundled `download-cleaner` skill automates
+this triage (partials / torrents / installers / archives → a suggested action
+per file):
 
 ```bash
 # list download residue that should be cleaned up
@@ -57,6 +59,20 @@ mm-scan --source zspace /sata11/my/data
 The adapter talks to the same `ZSpaceClient`, so whatever platform auto-detection
 works for `zs` (macOS / Windows / Linux, or `ZS_CONFIG_DIR`) also works for the
 scanner.
+
+## Organizer skill family (any NAS via mount)
+
+`zs skill` installs 8 read-only organizer skills on top of `zspace-nas`:
+`nas-report` (entry point), `photo-organizer`, `music-organizer`,
+`work-organizer`, `portfolio-organizer`, `download-cleaner`, `dedup-finder`,
+`backup-auditor`.
+
+Their scanners are pure-stdlib and run on **mounted paths** (SMB/NFS), so they
+work with any NAS brand — not just ZSpace. Run `nas-report` first for a storage
+profile that routes you to the right specialist. Writes always go through the
+agent after you confirm an old→new plan: on ZSpace via `zs mv/rename/mkdir`
+(no mount needed), elsewhere via plain `mv -n` on the mount. Full list and
+workflows: [skills/README.md](../skills/README.md).
 
 ## MCP clients (Claude Desktop / Cursor / etc.)
 

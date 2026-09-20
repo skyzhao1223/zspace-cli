@@ -89,6 +89,22 @@ pip install "zspace-cli[mcp]"
 - API 为社区整理的非官方接口，可能随客户端更新变化
 - 目前鉴权依赖 macOS 桌面客户端
 
+## 相关 skills(整理工作流)
+
+本 skill 是极空间文件操作的**底座**。专项整理任务优先路由到对应 skill
+(它们的扫描跑在挂载路径上、跨 NAS 通用;极空间的写操作可回到本 skill 的 `zs` 命令):
+
+| 任务 | 用哪个 |
+|------|--------|
+| 不知道从哪开始 / 全盘存储画像 | **nas-report**(入口,会给路由建议) |
+| 照片视频按日期归档 | photo-organizer |
+| 音乐库(歌手/专辑/曲目) | music-organizer |
+| 工作文档(年份/项目/版本) | work-organizer |
+| 作品集(项目/封面/成品源文件) | portfolio-organizer |
+| 下载区清理分诊 | download-cleaner |
+| 重复文件精确去重 | dedup-finder |
+| 备份健康审计 | backup-auditor |
+
 ## 影视整理
 
 专用工作流见独立 skill：**media-manager-skill**（https://github.com/skyzhao1223/media-manager-skill）  
