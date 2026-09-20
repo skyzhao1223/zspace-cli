@@ -75,10 +75,16 @@ Prerequisite: the ZSpace **desktop client is running and logged in** on this Mac
 zs check
 ```
 
-- ✅ Connection OK → skip to Step 5 (no mounting needed)
+- ✅ Connection OK → basic file ops (browse / move / rename / search) are ready
 - ❌ Fails → make sure the ZSpace app is open and logged in, retry
 
-## Step 3 (Synology / QNAP / UGREEN / …): Mount your NAS folder
+> **Note:** the 8 organizer skills (photo archiving, de-dup, …) scan a
+> **mounted folder** — ZSpace users still need the mount step below (30 seconds)
+> before Step 4. Skip it only if you just want the basic file operations.
+
+## Step 3 (all brands): Mount the folder you want organized
+
+ZSpace / Synology / QNAP / UGREEN all speak SMB — same procedure.
 
 **macOS**:
 
@@ -92,6 +98,8 @@ zs check
 says `/Volumes/photo`.
 
 > Don't know the NAS IP? Check its web admin page or your router's device list.
+> ZSpace users: if the connection fails, make sure SMB (file sharing) is
+> enabled in the ZSpace client or its web admin.
 
 ## Step 4: Give the playbooks to your AI assistant
 
