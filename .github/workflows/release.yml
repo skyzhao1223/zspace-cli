@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write   # PyPI Trusted Publishing (OIDC) — no long-lived token
     steps:
       - uses: actions/checkout@v4
         with:
@@ -20,7 +21,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[mcp,dev]" build twine
+      - run: pip install -e ".[mcp,dev]" build
       - name: doctor gate
         run: python -c "import zspace_cli; print('ok', zspace_cli.__version__)"
       - name: bump version
@@ -46,12 +47,10 @@ jobs:
         run: |
           python -m build
           python -c "import zipfile, glob; w=sorted(glob.glob('dist/*.whl'))[-1]; z=zipfile.ZipFile(w); print('wheel ok', len(z.namelist()), 'entries')"
-      - name: publish to PyPI
-        run: |
-          python -m twine upload --repository-url https://upload.pypi.org/legacy/ \
-            --username __token__ --password "$PYPI_TOKEN" dist/*.tar.gz dist/*.whl
-        env:
-          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+      - name: Publish to PyPI (Trusted Publishing / OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
       - name: tag + GitHub Release
         run: |
           VER=$(python -c "import re,pathlib; m=re.search(r'^version\s*=\s*\"([^\"]+)\"', pathlib.Path('pyproject.toml').read_text(), re.M); print(m.group(1))")

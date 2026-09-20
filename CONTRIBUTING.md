@@ -129,6 +129,12 @@ choose `patch`/`minor`/`major`). It bumps `pyproject.toml` (the single source of
 version truth — `__init__.py` reads it via importlib.metadata), builds, publishes
 to PyPI, commits `chore: release vX.Y.Z`, tags, and creates a GitHub Release.
 
+Publishing uses **PyPI Trusted Publishing (OIDC)** — no `PYPI_TOKEN` secret.
+One-time setup lives on PyPI → project settings → *Trusted publishers*:
+owner `skyzhao1223`, repo `zspace-cli`, workflow `release.yml`, environment
+left blank. If that config drifts (e.g. the workflow file is renamed), the
+publish step fails with 403.
+
 > `server.json` (MCP registry metadata) is **not** auto-bumped — update its two
 > `version` fields manually when preparing a release.
 
