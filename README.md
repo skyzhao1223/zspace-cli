@@ -17,7 +17,7 @@ mcp-name: io.github.skyzhao1223/zspace-cli
 
 > Just keep the ZSpace desktop client logged in on macOS.
 
-[Skills](skills/README.md) · [中文文档](docs/README.zh.md)
+[Skills](skills/README.md) — incl. **8 cross-NAS organizer skills** for AI agents · [中文文档](docs/README.zh.md)
 
 <p align="center">
   <img src="docs/assets/demo.gif" alt="zspace-cli terminal demo" width="720">

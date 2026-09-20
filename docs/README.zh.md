@@ -15,7 +15,7 @@
 
 > 只要 macOS 上极空间桌面客户端已登录即可。
 
-[Skills 说明](../skills/README.md) · [English README](../README.md)
+[Skills 说明](../skills/README.md)（含 **8 个跨 NAS 整理 skill**） · [English README](../README.md)
 
 <p align="center">
   <img src="assets/demo.gif" alt="zspace-cli 终端演示" width="720">
