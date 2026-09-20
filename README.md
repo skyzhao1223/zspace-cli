@@ -106,8 +106,10 @@ patterns on the source path.
 ## Use with AI agents (Skills)
 
 ```bash
-zs skill ~/your-project/.cursor/skills/   # Cursor
+zs skill --list                           # see what's available
+zs skill ~/your-project/.cursor/skills/   # install all (Cursor)
 # zs skill ~/your-project/skills/         # Claude Code, etc.
+zs skill ~/your-project/skills/ --only nas-report,photo-organizer   # or pick a few
 ```
 
 Then tell your agent things like "list the files in `/sata11/my/data`". The skills ship inside the wheel, so `zs skill` works on any machine that has `zspace-cli` installed.

@@ -58,8 +58,10 @@ with ZSpaceClient() as zs:
 ### 配合 AI Agent 使用（Skills）
 
 ```bash
-zs skill ~/your-project/.cursor/skills/   # Cursor
-zs skill ~/your-project/skills/           # Claude Code 等（可复制到多个项目）
+zs skill --list                           # 先看有哪些可用
+zs skill ~/your-project/.cursor/skills/   # 全装（Cursor）
+zs skill ~/your-project/skills/           # 全装（Claude Code 等，可复制到多个项目）
+zs skill ~/your-project/skills/ --only nas-report,photo-organizer   # 或按需选装
 ```
 
 复制后，直接对你的 Agent 说「列出 NAS `/sata11/my/data` 里的文件」即可。

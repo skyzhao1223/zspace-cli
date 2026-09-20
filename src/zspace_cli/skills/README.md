@@ -10,9 +10,12 @@ pip install zspace-cli
 zs check
 
 # 2. 复制 skill 到你的项目
-zs skill ~/your-project/.cursor/skills/   # Cursor
+zs skill --list                            # 先看有哪些
+zs skill ~/your-project/.cursor/skills/    # 全装(Cursor)
 # 或
-zs skill ~/your-project/skills/           # Claude Code 等
+zs skill ~/your-project/skills/            # 全装(Claude Code 等)
+# 或按需选装
+zs skill ~/your-project/skills/ --only nas-report,photo-organizer,dedup-finder
 
 # 3. 对你的 Agent 说
 # 「列出我 NAS 上 /sata11/my/data 的文件」

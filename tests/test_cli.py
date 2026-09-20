@@ -220,6 +220,68 @@ def test_cli_skill(tmp_path, monkeypatch):
     assert (target / "zspace-nas").is_dir()
 
 
+def _fake_skills(tmp_path, monkeypatch, names):
+    import zspace_cli.cli as cli
+
+    fake_data = tmp_path / "skills"
+    for n in names:
+        (fake_data / n).mkdir(parents=True)
+    monkeypatch.setattr(cli, "__file__", str(tmp_path / "cli.py"))
+    return fake_data
+
+
+def test_cli_skill_list(tmp_path, monkeypatch):
+    _fake_skills(tmp_path, monkeypatch, ["zspace-nas", "photo-organizer"])
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=120)
+    with patch("zspace_cli.cli.console", console):
+        r = CliRunner().invoke(app, ["skill", "--list"])
+    assert r.exit_code == 0
+    out = buf.getvalue()
+    assert "photo-organizer" in out
+    assert "zspace-nas" in out
+
+
+def test_cli_skill_only(tmp_path, monkeypatch):
+    _fake_skills(tmp_path, monkeypatch,
+                 ["zspace-nas", "photo-organizer", "dedup-finder"])
+    target = tmp_path / "proj" / "skills"
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=120)
+    with patch("zspace_cli.cli.console", console):
+        r = CliRunner().invoke(
+            app,
+            ["skill", str(target), "--only", "photo-organizer,dedup-finder"],
+        )
+    assert r.exit_code == 0
+    assert "已复制 2 个 skill" in buf.getvalue()
+    assert (target / "photo-organizer").is_dir()
+    assert (target / "dedup-finder").is_dir()
+    assert not (target / "zspace-nas").exists()
+
+
+def test_cli_skill_only_unknown(tmp_path, monkeypatch):
+    _fake_skills(tmp_path, monkeypatch, ["zspace-nas"])
+    target = tmp_path / "proj" / "skills"
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=120)
+    with patch("zspace_cli.cli.console", console):
+        r = CliRunner().invoke(app, ["skill", str(target), "--only", "nope"])
+    assert r.exit_code == 1
+    assert "未知 skill" in buf.getvalue()
+    assert "zspace-nas" in buf.getvalue()  # 提示可用列表
+
+
+def test_cli_skill_no_target(tmp_path, monkeypatch):
+    _fake_skills(tmp_path, monkeypatch, ["zspace-nas"])
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=False, width=120)
+    with patch("zspace_cli.cli.console", console):
+        r = CliRunner().invoke(app, ["skill"])
+    assert r.exit_code == 1
+    assert "请提供目标目录" in buf.getvalue()
+
+
 def test_build_rich_tree():
     from rich.tree import Tree
 

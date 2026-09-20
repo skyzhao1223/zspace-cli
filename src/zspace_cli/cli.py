@@ -451,9 +451,17 @@ def down(
 
 @app.command()
 def skill(
-    target_dir: Path = typer.Argument(
-        ...,
+    target_dir: Optional[Path] = typer.Argument(
+        None,
         help="目标目录，如 ~/your-project/.cursor/skills 或 ~/your-project/skills",
+    ),
+    list_: bool = typer.Option(
+        False, "--list", help="只列出可用 skills，不复制"
+    ),
+    only: Optional[str] = typer.Option(
+        None,
+        "--only",
+        help="只复制指定 skills（逗号分隔），如 photo-organizer,dedup-finder",
     ),
 ):
     """复制 Agent skills 到你的项目目录"""
@@ -467,22 +475,54 @@ def skill(
         )
         raise typer.Exit(1)
 
+    # 可用 skills = data_root 下的子目录
+    available = sorted(
+        d.name for d in data_root.iterdir()
+        if d.is_dir() and d.name != "__pycache__"
+    )
+
+    if list_:
+        console.print("可用 skills：")
+        for name in available:
+            console.print(f"  - {name}")
+        raise typer.Exit(0)
+
+    if target_dir is None:
+        console.print(
+            "[red]![/red] 请提供目标目录（或用 --list 查看可用 skills）"
+        )
+        raise typer.Exit(1)
+
+    # 解析 --only（缺省=全部）
+    if only:
+        wanted = [s.strip() for s in only.split(",") if s.strip()]
+        unknown = [s for s in wanted if s not in available]
+        if unknown:
+            console.print(f"[red]![/red] 未知 skill：{', '.join(unknown)}")
+            console.print(f"  可用：{', '.join(available)}")
+            raise typer.Exit(1)
+    else:
+        wanted = available
+
     target = target_dir.expanduser()
     target.mkdir(parents=True, exist_ok=True)
+
+    # 一并带上 skills/README.md 总览(不计入 skill 数)
+    readme = data_root / "README.md"
+    if readme.is_file():
+        shutil.copy2(readme, target / "README.md")
+
     copied = 0
-    for item in data_root.iterdir():
-        if item.name in ("__init__.py", "__pycache__"):
+    for name in wanted:
+        src = data_root / name
+        if not src.is_dir():
             continue
-        dest = target / item.name
-        if item.is_dir():
-            shutil.copytree(
-                item,
-                dest,
-                dirs_exist_ok=True,
-                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-            )
-        else:
-            shutil.copy2(item, dest)
+        shutil.copytree(
+            src,
+            target / name,
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
         copied += 1
     console.print(f"[green]OK[/green] 已复制 {copied} 个 skill 到 [bold]{target}[/bold]")
     console.print("  对 Agent 说「列出 NAS 文件」即可使用。")
