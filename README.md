@@ -2,7 +2,7 @@
 
 # zspace-cli
 
-**English** · [简体中文](docs/README.zh.md)
+**English** · [简体中文](https://github.com/skyzhao1223/zspace-cli/blob/main/docs/README.zh.md)
 
 [![PyPI - Version](https://img.shields.io/pypi/v/zspace-cli?cacheSeconds=3600)](https://pypi.org/project/zspace-cli/)
 [![PyPI - Python](https://img.shields.io/pypi/pyversions/zspace-cli?cacheSeconds=3600)](https://pypi.org/project/zspace-cli/)
@@ -17,10 +17,10 @@ mcp-name: io.github.skyzhao1223/zspace-cli
 
 > Just keep the ZSpace desktop client logged in on macOS.
 
-[**Beginner guide**](docs/beginner-guide.md) (no coding required) · [Skills](skills/README.md) — incl. **8 cross-NAS organizer skills** for AI agents · [中文文档](docs/README.zh.md)
+[**Beginner guide**](https://github.com/skyzhao1223/zspace-cli/blob/main/docs/beginner-guide.md) (no coding required) · [Skills](https://github.com/skyzhao1223/zspace-cli/blob/main/skills/README.md) — incl. **8 cross-NAS organizer skills** for AI agents · [中文文档](https://github.com/skyzhao1223/zspace-cli/blob/main/docs/README.zh.md)
 
 <p align="center">
-  <img src="docs/assets/demo.gif" alt="zspace-cli terminal demo" width="720">
+  <img src="https://raw.githubusercontent.com/skyzhao1223/zspace-cli/main/docs/assets/demo.gif" alt="zspace-cli terminal demo" width="720">
 </p>
 
 ---
@@ -127,7 +127,7 @@ Besides `zspace-nas` (the zero-config base for ZSpace file ops), `zs skill` inst
 | **dedup-finder** | Content-level exact de-dup (3-stage fingerprint size→head→full sha1, zero false positives) |
 | **backup-auditor** | Backup health: version rotation, staleness, coverage check |
 
-Start with `nas-report` to see the big picture, then run whichever specialist it recommends. See [skills/README.md](skills/README.md) for the full list. Media-library naming stays a separate project: [media-manager-skill](https://github.com/skyzhao1223/media-manager-skill).
+Start with `nas-report` to see the big picture, then run whichever specialist it recommends. See [skills/README.md](https://github.com/skyzhao1223/zspace-cli/blob/main/skills/README.md) for the full list. Media-library naming stays a separate project: [media-manager-skill](https://github.com/skyzhao1223/media-manager-skill).
 
 ---
 
@@ -259,7 +259,7 @@ zspace-cli/
 
 ## Integrations
 
-Pair zspace-cli with [Jellyfin / Emby / MoviePilot / MCP clients / Docker](docs/integrations.md) and [media-manager-skill](https://github.com/skyzhao1223/media-manager-skill) for media library tooling.
+Pair zspace-cli with [Jellyfin / Emby / MoviePilot / MCP clients / Docker](https://github.com/skyzhao1223/zspace-cli/blob/main/docs/integrations.md) and [media-manager-skill](https://github.com/skyzhao1223/media-manager-skill) for media library tooling.
 
 ---
 
@@ -269,13 +269,17 @@ Pair zspace-cli with [Jellyfin / Emby / MoviePilot / MCP clients / Docker](docs/
 - [x] Linux / Windows client auth (best-effort path detection + `ZS_CONFIG_DIR`)
 - [x] Docker headless option (`ZS_BASE_URL` + `docker-compose.yml`)
 - [x] Batch glob helpers (`glob()` + `zs rm/mv/cp/down` patterns)
+- [x] Agent skill family: 8 cross-NAS organizers + `nas-report` entry, selective install (`zs skill --list/--only`)
+- [ ] Optional EXIF-based photo dating (`photo-organizer` via exiftool/mdls)
+- [ ] Per-skill config overrides (whitelist dirs / extension sets)
+- [ ] Growth-trend reports (diff two `nas-report` snapshots)
 
 ---
 
 ## Contributing
 
 Open an issue first to discuss changes. PRs welcome — see
-[CONTRIBUTING.md](CONTRIBUTING.md) for dev setup, quality gates, and the
+[CONTRIBUTING.md](https://github.com/skyzhao1223/zspace-cli/blob/main/CONTRIBUTING.md) for dev setup, quality gates, and the
 skill-authoring guide (including the `skills/` ↔ `src/zspace_cli/skills/`
 dual-copy sync rule that CI enforces).
 

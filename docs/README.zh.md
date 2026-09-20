@@ -257,6 +257,10 @@ zspace-cli/
 - [x] Linux / Windows 客户端鉴权（尽力路径探测 + `ZS_CONFIG_DIR`）
 - [x] Docker 无头模式（`ZS_BASE_URL` + `docker-compose.yml`）
 - [x] 批量 glob 辅助（`glob()` + `zs rm/mv/cp/down` 通配）
+- [x] Agent skill 家族：8 个跨 NAS 整理 skill + `nas-report` 入口、按需安装（`zs skill --list/--only`）
+- [ ] 照片 EXIF 精确日期（photo-organizer 可选外挂 exiftool / mdls）
+- [ ] skill 白名单目录 / 扩展名集合支持外部配置覆盖
+- [ ] 存储增长趋势（对比两次 nas-report 快照）
 
 ---
 
