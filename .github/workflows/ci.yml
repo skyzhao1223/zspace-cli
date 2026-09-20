@@ -36,6 +36,26 @@ jobs:
       - run: pip install -e ".[mcp,dev]"
       - run: python -m pyright
 
+  skills:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Lint skill scripts
+        run: |
+          pip install "ruff>=0.11"
+          ruff check skills
+      - name: Smoke tests (offline fixtures, py3.9 = min supported)
+        run: |
+          for d in skills/*/; do
+            [ -f "$d/tests/smoke.sh" ] || continue
+            echo "::group::smoke $d"
+            bash "$d/tests/smoke.sh"
+            echo "::endgroup::"
+          done
+
   docker:
     runs-on: ubuntu-latest
     needs: test
