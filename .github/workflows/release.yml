@@ -52,6 +52,8 @@ jobs:
         with:
           packages-dir: dist/
       - name: tag + GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}   # gh CLI requires this in Actions
         run: |
           VER=$(python -c "import re,pathlib; m=re.search(r'^version\s*=\s*\"([^\"]+)\"', pathlib.Path('pyproject.toml').read_text(), re.M); print(m.group(1))")
           git add -A
