@@ -97,14 +97,14 @@ zs skill ~/your-project/skills/ --only nas-report,photo-organizer   # 或按需�
 | `zs rm <path>` | 删除（`-f/--force` 跳过确认） |
 | `zs find <keyword> [path]` | NAS 全文搜索 |
 | `zs tree [path]` | 树形浏览（`-d/--depth N`，默认 2） |
-| `zs up <local> <remote_dir>` | 上传（`-n/--name` 指定远端文件名） |
+| `zs up <local> <remote_dir>` | 上传（`-n/--name` 指定远端文件名；大文件自动切换分片上传） |
 | `zs down <path> [dir]` | 下载 |
 | `zs skill <dir>` | 把 Agent skills 复制到项目目录（`--list` 列出 / `--only` 选装） |
 | `zs --config-dir <dir>` | 指定非默认 `vuex.json` 位置（或环境变量 `ZS_CONFIG_DIR`） |
 
 `zs check`、`zs ls`、`zs info`、`zs find`、`zs tree` 支持 `--json` 机器可读输出；`zs mv`/`zs cp`/`zs rm`/`zs down` 的源路径支持 `* ?` glob 通配。
 
-> `ls` 自动分页（NAS 单次最多 50 条，会循环拉全）；`find` 走 NAS 全文索引，跨目录搜索。上传/下载在真实终端显示进度条，且为流式传输（不整文件读入内存）。
+> `ls` 自动分页（NAS 单次最多 50 条，会循环拉全）；`find` 走 NAS 全文索引，跨目录搜索。上传/下载在真实终端显示进度条，且为流式传输（不整文件读入内存）。中文路径开箱即用。超过 64MB 的文件自动走桌面客户端的 `/v2/file/upload` 分片协议（2MB/片）——本地代理对单请求体积有上限（超限返回 413），小文件遇到 413 也会自动回退到分片上传。
 
 ---
 
@@ -219,7 +219,8 @@ SDK 方式：`client.glob("/sata11/my/data/**/*.mkv")`。
 | `/v2/file/newdir` | `parent`, `name`, `rename=0` |
 | `/v2/file/move` / `copy` | `paths[]`, `to` |
 | `/v2/file/remove` | `paths[]` |
-| `/v2/file/create` | 二进制 body，header `path`（上传） |
+| `/v2/file/create` | 二进制 body，header `path` 传 UTF-8 字节（小文件上传；超过代理体积上限返回 413） |
+| `/v2/file/upload` | 分片上传：query `uuid`=`md5(mtime_ms+size+目标路径)`，每片 2MB，header `seek`/`split=1`/`size`/`path` |
 | `/v2/file/download` | GET `path`, `remote_port=8050` |
 | `/file_search/file_search` | `keyword` |
 

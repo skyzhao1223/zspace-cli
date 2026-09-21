@@ -71,7 +71,7 @@ with ZSpaceClient() as zs:
 | `zs rm <path>` | Delete (`-f/--force` skips confirmation) |
 | `zs find <keyword> [path]` | Full-text search across the NAS |
 | `zs tree [path]` | Tree view (`-d/--depth N`, default 2) |
-| `zs up <local> <remote_dir>` | Upload (`-n/--name` to rename remotely) |
+| `zs up <local> <remote_dir>` | Upload (`-n/--name` to rename remotely; large files auto-switch to sliced upload) |
 | `zs down <path> [dir]` | Download |
 | `zs skill <dir>` | Copy Agent skills into a project (`--list`, `--only a,b`) |
 | `zs --config-dir <dir>` | Point at a non-default `vuex.json` location (or `ZS_CONFIG_DIR`) |
@@ -80,7 +80,7 @@ with ZSpaceClient() as zs:
 machine-readable output. `zs mv`/`zs cp`/`zs rm`/`zs down` accept `* ?` glob
 patterns on the source path.
 
-> `ls` pages through large directories automatically (the NAS API returns at most 50 entries per call). `find` uses the NAS full-text index, so it searches across directories. Upload/download show a progress bar on a real terminal and stream the file (no full-file buffering).
+> `ls` pages through large directories automatically (the NAS API returns at most 50 entries per call). `find` uses the NAS full-text index, so it searches across directories. Upload/download show a progress bar on a real terminal and stream the file (no full-file buffering). CJK paths work out of the box. Files above 64 MB are uploaded through the desktop client's sliced `/v2/file/upload` protocol (2 MB slices), because the local proxy rejects oversized single-request bodies with HTTP 413; a 413 on a smaller file falls back to slices automatically.
 
 ---
 
@@ -231,7 +231,8 @@ Or via the SDK: `client.glob("/sata11/my/data/**/*.mkv")`.
 | `/v2/file/newdir` | `parent`, `name`, `rename=0` |
 | `/v2/file/move` / `copy` | `paths[]`, `to` |
 | `/v2/file/remove` | `paths[]` |
-| `/v2/file/create` | binary body, header `path` (upload) |
+| `/v2/file/create` | binary body, header `path` as UTF-8 bytes (small-file upload; proxy returns 413 above a size cap) |
+| `/v2/file/upload` | sliced upload: query `uuid`=`md5(mtime_ms+size+target_path)`, headers `seek`/`split=1`/`size`/`path` per 2 MB slice |
 | `/v2/file/download` | GET `path`, `remote_port=8050` |
 | `/file_search/file_search` | `keyword` |
 

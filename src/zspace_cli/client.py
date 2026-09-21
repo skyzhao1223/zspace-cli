@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import math
 import random
 import time
 from collections.abc import Callable
@@ -25,6 +27,20 @@ _RETRYABLE_EXC: tuple[type[BaseException], ...] = (
     httpx.TransportError,
     httpx.HTTPStatusError,
 )
+
+# Business error codes the desktop client treats as fatal during sliced
+# uploads (no retry): permission / conflicting-dir / safe-box closed, etc.
+_UPLOAD_FATAL_CODES = frozenset({"N001302", "N001331", "N001603", "N001397"})
+
+# The desktop client's local proxy (openresty) rejects request bodies above a
+# size limit on /v2/file/create with HTTP 413. Files larger than this
+# threshold go straight through the sliced /v2/file/upload protocol instead;
+# smaller files try /v2/file/create first and fall back to slices on 413.
+DEFAULT_SLICE_THRESHOLD = 64 * 1024 * 1024
+
+# Slice size for /v2/file/upload — matches the desktop client's remote-mode
+# maximum (dynamicSplitSize caps at 2MB when not on LAN).
+DEFAULT_SLICE_SIZE = 2 * 1024 * 1024
 
 ProgressCallback = Callable[[int, int], None]
 
@@ -123,6 +139,8 @@ class ZSpaceClient:
         api_version: str = DEFAULT_API_VERSION,
         max_retries: int = 2,
         retry_delay: float = 0.25,
+        slice_threshold: int = DEFAULT_SLICE_THRESHOLD,
+        slice_size: int = DEFAULT_SLICE_SIZE,
     ):
         # base_url defaults to the desktop client proxy, overridable via the
         # ZS_BASE_URL env var (e.g. when running in a container against the host).
@@ -131,6 +149,8 @@ class ZSpaceClient:
         self.api_version = api_version
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self.slice_threshold = slice_threshold
+        self.slice_size = slice_size
         # trust_env=False: macOS system HTTP proxy (e.g. Clash :7897) must not
         # intercept 127.0.0.1:13579, or all API calls return empty 502.
         # The download (GET) endpoint authenticates via a full cookie set
@@ -401,6 +421,12 @@ class ZSpaceClient:
         ``remote_dir`` — destination directory, e.g. ``/sata11/my/data/影视``.
         ``new_name``   — optional target filename (defaults to local basename).
         ``progress``   — optional callback ``(bytes_done, bytes_total)``.
+
+        Small files go through ``/v2/file/create`` in a single request. Large
+        files (> ``slice_threshold``) use the desktop client's sliced
+        ``/v2/file/upload`` protocol, because the local proxy rejects
+        oversized single-request bodies with HTTP 413; a 413 on the create
+        path also falls back to sliced upload automatically.
         """
         local = Path(local_path)
         if not local.is_file():
@@ -409,7 +435,16 @@ class ZSpaceClient:
         target = f"{remote_dir.rstrip('/')}/{target_name}"
         total = local.stat().st_size
 
+        if total > self.slice_threshold:
+            return self._upload_sliced(local, target, total, progress)
+
         last_exc: BaseException | None = None
+        create_headers: dict[str, Any] = {
+            "Content-Type": "application/octet-stream",
+            # Header values must be ASCII; CJK paths crash httpx unless
+            # encoded. The proxy accepts raw UTF-8 bytes.
+            "path": target.encode("utf-8"),
+        }
         with local.open("rb") as fh:
             for attempt in range(self.max_retries + 1):
                 fh.seek(0)
@@ -418,12 +453,17 @@ class ZSpaceClient:
                     resp = self._http.post(
                         self._url("/v2/file/create"),
                         content=reader,  # stream the file — don't buffer GBs into memory
-                        headers={
-                            "Content-Type": "application/octet-stream",
-                            "path": target,
-                        },
+                        headers=create_headers,
                     )
                     return self._check_response(resp).get("data", {})
+                except httpx.HTTPStatusError as exc:
+                    if exc.response.status_code == 413:
+                        # body too large for the local proxy — switch to slices
+                        return self._upload_sliced(local, target, total, progress)
+                    if not self._is_retryable(exc) or attempt >= self.max_retries:
+                        raise
+                    last_exc = exc
+                    time.sleep(min(self.retry_delay * (2**attempt), 2.0))
                 except ZSpaceError:
                     raise
                 except _RETRYABLE_EXC as exc:
@@ -432,6 +472,89 @@ class ZSpaceClient:
                     last_exc = exc
                     time.sleep(min(self.retry_delay * (2**attempt), 2.0))
         raise last_exc  # type: ignore[misc]
+
+    def _upload_sliced(
+        self,
+        local: Path,
+        target: str,
+        total: int,
+        progress: ProgressCallback | None = None,
+    ) -> dict[str, Any]:
+        """Sliced upload via /v2/file/upload — the desktop client's protocol.
+
+        Each slice is an independent POST carrying ``uuid`` (upload session),
+        ``seek`` (slice offset) and ``split=1``; the NAS assembles the slices
+        into the target file once the last one lands. The session ``uuid`` is
+        ``md5(mtime_ms + size + target_path)`` — the same formula the desktop
+        client uses (JS adds the two numbers, then concatenates the path).
+        """
+        st = local.stat()
+        mtime_ms = math.ceil(st.st_mtime * 1000)
+        uuid = _upload_uuid(mtime_ms, total, target)
+        modify_time = math.ceil(mtime_ms / 1000)
+        sent = 0
+        with local.open("rb") as fh:
+            while sent < total:
+                length = min(self.slice_size, total - sent)
+                body = fh.read(length)
+                if len(body) != length:
+                    raise ZSpaceError("local", f"本地文件读取不完整: {local}")
+                params: dict[str, Any] = {
+                    "app": "file",
+                    "path": _urlencode(target),
+                    "size": total,
+                    "uuid": uuid,
+                    "seek": sent,
+                    "crtime": "",
+                    "modify_time": modify_time,
+                    "rename": 0,
+                    "token": _urlencode(self._creds.token),
+                    "plat": "pc",
+                    "nasid": self._creds.nas_id,
+                    "version": self._creds.app_version,
+                    "device_id": self._creds.device_id,
+                    "device": _urlencode(self._creds.device),
+                    "Content-Length": length,
+                    "request-purpose": 4,
+                    "remote-port": 8050,
+                    "split": 1,
+                }
+                headers = {k: str(v) for k, v in params.items()}
+                headers["Cookie"] = _upload_cookie(params)
+                headers["Content-Type"] = "application/octet-stream"
+                url = (
+                    f"/v2/file/upload?remote_port=8050"
+                    f"&drnd={int(time.time() * 1000)}&uuid={uuid}"
+                )
+                self._post_slice(url, body, headers)
+                sent += length
+                if progress is not None:
+                    progress(sent, total)
+        return {"path": target, "name": target.rsplit("/", 1)[-1], "size": total}
+
+    def _post_slice(self, url: str, body: bytes, headers: dict[str, str]) -> dict[str, Any]:
+        """POST one upload slice, retrying transient failures like _send().
+
+        Unlike _send(), non-fatal business error codes are also retried —
+        the desktop client re-runs any slice whose code is not in
+        _UPLOAD_FATAL_CODES (up to its own retry budget).
+        """
+        last_exc: BaseException | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                resp = self._http.post(url, content=body, headers=headers)
+                return self._check_response(resp)
+            except ZSpaceError as exc:
+                if exc.code in _UPLOAD_FATAL_CODES or attempt >= self.max_retries:
+                    raise
+                last_exc = exc
+            except _RETRYABLE_EXC as exc:
+                if not self._is_retryable(exc) or attempt >= self.max_retries:
+                    raise
+                last_exc = exc
+            time.sleep(min(self.retry_delay * (2**attempt), 2.0))
+        assert last_exc is not None
+        raise last_exc
 
     def download(
         self,
@@ -516,6 +639,29 @@ class ZSpaceClient:
 def _urlencode(s: str) -> str:
     from urllib.parse import quote
     return quote(str(s), safe="")
+
+
+def _upload_uuid(mtime_ms: int, size: int, target: str) -> str:
+    """Session uuid for /v2/file/upload.
+
+    The desktop client computes ``md5(file.lastModified + file.size + path)``
+    in JavaScript — the two numbers are ADDED first, then the sum is
+    string-concatenated with the target path.
+    """
+    return hashlib.md5(f"{mtime_ms + size}{target}".encode()).hexdigest()
+
+
+def _upload_cookie(params: dict[str, Any]) -> str:
+    """Build the Cookie header for /v2/file/upload from its param dict.
+
+    Mirrors the desktop client's serializer: every param (percent-encoded)
+    is duplicated into the Cookie, with ``nasid`` renamed to ``nas_id``.
+    """
+    parts = []
+    for k, v in params.items():
+        key = "nas_id" if k == "nasid" else k
+        parts.append(f"{key}={_urlencode(str(v))}")
+    return "; ".join(parts)
 
 
 def _glob_to_regex(pattern: str) -> Any:

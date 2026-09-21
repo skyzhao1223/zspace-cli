@@ -15,6 +15,10 @@ class Credentials:
     nas_id: str
     device_id: str
     username: str = ""
+    # state.app.device / state.app.version — required by the sliced
+    # /v2/file/upload protocol, which replicates the desktop client's headers.
+    device: str = ""
+    app_version: str = "1.0"
 
 
 # Env var to override the config directory (helpful when auto-detection
@@ -118,6 +122,8 @@ def load_credentials(config_dir: Path | str | None = None) -> Credentials:
         nas_id=nas["nasId"],
         device_id=app.get("deviceId", ""),
         username=user.get("username", ""),
+        device=app.get("device", ""),
+        app_version=app.get("version", "1.0"),
     )
 
     if stamp is not None:

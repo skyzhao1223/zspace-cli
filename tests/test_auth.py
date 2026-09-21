@@ -20,11 +20,15 @@ def _write_vuex(tmp_path: Path) -> Path:
         "state": {
             "user": {"token": "tok-123", "username": "skyzhao1223"},
             "nas": {"nasId": "Z04A01012A0ZB"},
-            "app": {"deviceId": "dev-abc", "version": "1.0"},
+            "app": {
+                "deviceId": "dev-abc",
+                "version": "1.0",
+                "device": "Mac（Sky的MacBook Pro）",
+            },
         }
     }
     vuex = tmp_path / "vuex.json"
-    vuex.write_text(json.dumps(payload), encoding="utf-8")
+    vuex.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     return vuex
 
 
@@ -36,6 +40,8 @@ def test_load_credentials(tmp_path):
     assert creds.nas_id == "Z04A01012A0ZB"
     assert creds.device_id == "dev-abc"
     assert creds.username == "skyzhao1223"
+    assert creds.device == "Mac（Sky的MacBook Pro）"
+    assert creds.app_version == "1.0"
     assert vuex.exists()
 
 
@@ -55,6 +61,8 @@ def test_load_credentials_tolerates_no_app(tmp_path):
     creds = load_credentials(tmp_path)
     assert creds.device_id == ""
     assert creds.username == ""
+    assert creds.device == ""
+    assert creds.app_version == "1.0"
 
 
 def test_load_credentials_caches_then_invalidates(tmp_path):

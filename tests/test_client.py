@@ -150,12 +150,25 @@ def test_upload_posts_binary_with_path_header(client, tmp_path):
     )
     result = client.upload(src, "/dst")
     assert result["path"] == "/dst/hello.txt"
-    # the request must carry the full target path as a header
+    # the request must carry the full target path as a header — UTF-8 bytes,
+    # so CJK paths don't crash httpx's ASCII header-value validation
     _, kwargs = client._http.post.call_args
     headers = kwargs["headers"]
-    assert headers["path"] == "/dst/hello.txt"
+    assert headers["path"] == b"/dst/hello.txt"
     # upload now streams the file object instead of buffering bytes
     assert hasattr(kwargs["content"], "read")
+
+
+def test_upload_cjk_path_header_encodes_utf8(client, tmp_path):
+    src = tmp_path / "视频.mp4"
+    src.write_bytes(b"x" * 10)
+    client._http.post.return_value = MagicMock(
+        raise_for_status=lambda: None,
+        json=lambda: _resp("200", {"path": "/影视/视频.mp4"}),
+    )
+    client.upload(src, "/影视")
+    _, kwargs = client._http.post.call_args
+    assert kwargs["headers"]["path"] == "/影视/视频.mp4".encode()
 
 
 def test_upload_missing_local_file(client, tmp_path):
@@ -554,3 +567,114 @@ def test_diagnose_exists():
 
 def test_diagnose_unknown_code():
     assert ZSpaceError.diagnose("500", "something weird") is None
+
+
+# --- sliced upload (/v2/file/upload) ---
+
+
+def test_upload_uuid_formula():
+    import hashlib
+
+    from zspace_cli.client import _upload_uuid
+
+    # JS: md5(lastModified + size + path) — the two numbers ADD, then concat
+    expected = hashlib.md5(b"1700000000579/dst/f.bin").hexdigest()
+    assert _upload_uuid(1700000000123, 456, "/dst/f.bin") == expected
+
+
+def test_upload_cookie_renames_nasid_and_encodes():
+    from zspace_cli.client import _upload_cookie
+
+    ck = _upload_cookie({"nasid": "N1", "path": "/a b/中.txt", "size": 3})
+    assert ck == "nas_id=N1; path=%2Fa%20b%2F%E4%B8%AD.txt; size=3"
+
+
+def test_upload_over_threshold_uses_slices(creds, tmp_path):
+    c = ZSpaceClient(credentials=creds, slice_threshold=0, slice_size=4)
+    c._http = MagicMock()
+    c._http.post.return_value = _resp_mock("200", {})
+    src = tmp_path / "f.bin"
+    src.write_bytes(b"0123456789")  # 10 bytes → slices of 4+4+2
+    seen: list = []
+    result = c.upload(src, "/dst", progress=lambda d, t: seen.append((d, t)))
+
+    assert c._http.post.call_count == 3
+    assert result == {"path": "/dst/f.bin", "name": "f.bin", "size": 10}
+    assert seen == [(4, 10), (8, 10), (10, 10)]
+
+    seeks, bodies = [], []
+    for call in c._http.post.call_args_list:
+        args, kwargs = call
+        url = args[0]
+        h = kwargs["headers"]
+        assert url.startswith("/v2/file/upload?remote_port=8050")
+        assert f"uuid={h['uuid']}" in url
+        assert h["split"] == "1"
+        assert h["size"] == "10"
+        assert h["path"] == "%2Fdst%2Ff.bin"
+        assert "nas_id=N1" in h["Cookie"]
+        assert h["Content-Type"] == "application/octet-stream"
+        seeks.append(int(h["seek"]))
+        bodies.append(kwargs["content"])
+    assert seeks == [0, 4, 8]
+    assert b"".join(bodies) == b"0123456789"
+
+
+def test_upload_uuid_stable_across_slices(creds, tmp_path):
+    c = ZSpaceClient(credentials=creds, slice_threshold=0, slice_size=4)
+    c._http = MagicMock()
+    c._http.post.return_value = _resp_mock("200", {})
+    src = tmp_path / "f.bin"
+    src.write_bytes(b"0123456789")
+    c.upload(src, "/dst")
+    uuids = {call[1]["headers"]["uuid"] for call in c._http.post.call_args_list}
+    assert len(uuids) == 1
+
+
+def test_upload_413_falls_back_to_slices(creds, tmp_path):
+    import httpx as _httpx
+
+    c = ZSpaceClient(credentials=creds, slice_threshold=1 << 40, slice_size=8)
+    c._http = MagicMock()
+    req = _httpx.Request("POST", "http://proxy/v2/file/create")
+    err = _httpx.HTTPStatusError(
+        "413", request=req, response=_httpx.Response(413, request=req)
+    )
+    c._http.post.side_effect = [err, _resp_mock("200", {}), _resp_mock("200", {})]
+    src = tmp_path / "big.bin"
+    src.write_bytes(b"y" * 10)
+
+    result = c.upload(src, "/dst")
+    urls = [call[0][0] for call in c._http.post.call_args_list]
+    assert "/v2/file/create" in urls[0]
+    assert all("/v2/file/upload" in u for u in urls[1:])
+    assert result["path"] == "/dst/big.bin"
+
+
+def test_upload_slice_fatal_code_raises_without_retry(creds, tmp_path):
+    c = ZSpaceClient(credentials=creds, slice_threshold=0, slice_size=4)
+    c._http = MagicMock()
+    c._http.post.return_value = _resp_mock("N001302", None, "无权限")
+    src = tmp_path / "f.bin"
+    src.write_bytes(b"abcd")
+    with pytest.raises(ZSpaceError) as ei:
+        c.upload(src, "/dst")
+    assert ei.value.code == "N001302"
+    assert c._http.post.call_count == 1
+
+
+def test_upload_slice_transient_code_retries(creds, tmp_path):
+    c = ZSpaceClient(
+        credentials=creds, slice_threshold=0, slice_size=4,
+        max_retries=2, retry_delay=0,
+    )
+    c._http = MagicMock()
+    c._http.post.side_effect = [
+        _resp_mock("N001500", None, "busy"),
+        _resp_mock("200", {}),
+    ]
+    src = tmp_path / "f.bin"
+    src.write_bytes(b"abcd")
+    result = c.upload(src, "/dst")
+    assert c._http.post.call_count == 2
+    assert result["path"] == "/dst/f.bin"

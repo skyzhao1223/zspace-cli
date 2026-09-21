@@ -89,6 +89,51 @@ URL 末尾必须附加 `?&rnd={timestamp}_{random}&webagent=v2` 查询参数。
 | `/zspool/info` | 存储池信息 |
 | `/v2/recent/list` | 最近访问文件 |
 
+## 文件上传 API
+
+### 小文件 — POST /v2/file/create
+
+Body 为裸文件字节，目标路径放在 **HTTP header `path`** 中。
+
+- header 值必须可 ASCII 编码：中文路径需传 **UTF-8 原始字节**（Python: `target.encode("utf-8")`；httpx ≥ 0.28 对 str 值强制 ASCII，直接传中文 str 会抛 `UnicodeEncodeError`）
+- 本地代理（openresty）对请求体大小有上限，超限返回 **HTTP 413**；大文件必须走下面的分片协议
+
+### 大文件 — POST /v2/file/upload（桌面客户端分片协议）
+
+```
+POST /v2/file/upload?remote_port=8050&drnd={毫秒时间戳}&uuid={uuid}
+Content-Type: application/octet-stream
+Body: 当前分片的裸字节（远端模式 ≤ 2MB/片）
+```
+
+会话 `uuid` 由客户端本地计算（无需注册接口）：
+
+```
+uuid = md5( str(ceil(mtime_ms) + size) + target_path )
+```
+
+注意：桌面客户端为 JS 实现——`lastModified + size` 两个数字先**相加**，其和再与目标完整路径**字符串拼接**。
+
+每片请求需携带以下 header（并按同样内容拼进 `Cookie`：`nasid` 在 Cookie 中改名 `nas_id`，所有值 percent-encode）：
+
+| Header | 说明 |
+|--------|------|
+| `app` | 固定 `file` |
+| `path` | 目标完整路径（percent-encode） |
+| `size` | 文件总大小 |
+| `uuid` | 会话 uuid（同上公式） |
+| `seek` | 当前分片起始偏移 |
+| `split` | 固定 `1` |
+| `Content-Length` | 当前分片长度 |
+| `modify_time` | `ceil(ceil(mtime_ms)/1000)`（秒） |
+| `crtime` | 创建时间（秒），可传空串 |
+| `rename` | `0` |
+| `token` / `plat=pc` / `nasid` / `version` / `device_id` / `device` | 鉴权字段（token/device 需 percent-encode；version 用 `state.app.version`） |
+| `request-purpose` | `4` |
+| `remote-port` | `8050` |
+
+分片按 `seek` 顺序逐片上传，最后一片到达后 NAS 端拼装为目标文件（实测 680MB 视频往返校验一致）。错误码 `N001302` / `N001331` / `N001603` / `N001397` 为致命错误（不要重试），其余可短暂退避后重试。
+
 ## 路径格式
 
 根路径格式：`/sata11/my/data/...`
@@ -98,6 +143,6 @@ URL 末尾必须附加 `?&rnd={timestamp}_{random}&webagent=v2` 查询参数。
 ## 已知限制
 
 - API 单次返回最多 50 条记录，大目录需分页（`start` + `limit` 参数）
-- 文件上传/下载未通过此 API 测试。大文件操作建议使用 Syncthing（端口 13581）
+- `/v2/file/create` 单请求体积受本地代理限制（超限 413），大文件用 `/v2/file/upload` 分片协议（见上文；zspace-cli 已自动路由）
 - API 来源于社区整理（非官方文档），可能随客户端版本更新而变化
 - `move`/`mkdir` 的参数名不同于直觉：用 `to`（非 `dest`）、`parent`（非 `path`）+ `rename=0`
