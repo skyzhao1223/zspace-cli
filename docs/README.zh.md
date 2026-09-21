@@ -267,9 +267,16 @@ zspace-cli/
 
 ## 贡献
 
-先开 issue 讨论再改。欢迎 PR——开发环境、质量门槛、新 skill 编写指南
+欢迎 PR——开发环境、质量门槛、新 skill 编写指南
 （含 `skills/` ↔ `src/zspace_cli/skills/` 双副本同步规则，CI 会强制校验）
 见 [CONTRIBUTING.md](../CONTRIBUTING.md)。
+
+- 🧭 **不知道从哪下手？** 从[贡献点子清单](CONTRIBUTION_IDEAS.md)
+  （带难度标签，含逆向得到的 NAS API 笔记）或
+  [`good first issue`](https://github.com/skyzhao1223/zspace-cli/labels/good%20first%20issue) 标签里挑一个
+- 💬 提问与晒配置：[Discussions](https://github.com/skyzhao1223/zspace-cli/discussions)
+- 🔒 安全问题：私密报告，见 [SECURITY.md](../SECURITY.md)
+- 🤝 本项目遵循 [Contributor Covenant 行为准则](../CODE_OF_CONDUCT.md)
 
 ## 许可证
 

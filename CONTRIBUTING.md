@@ -2,6 +2,23 @@
 
 Guidelines for hacking on zspace-cli — the core package and the Agent skills family.
 
+## Where to start
+
+- **Looking for something to build?** → [docs/CONTRIBUTION_IDEAS.md](docs/CONTRIBUTION_IDEAS.md)
+  — a curated, research-backed backlog (difficulty-tagged, with endpoint notes
+  reverse-engineered from the desktop client).
+- **First PR ever?** → filter the
+  [`good first issue`](https://github.com/skyzhao1223/zspace-cli/labels/good%20first%20issue)
+  label; comment to claim it.
+- **Questions, NAS-version reports, showcases** →
+  [Discussions](https://github.com/skyzhao1223/zspace-cli/discussions).
+- **Security problems** → private reporting, see [SECURITY.md](SECURITY.md).
+- Interaction ground rules: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+
+No NAS to test against? All unit tests are mocked (they run in CI without a
+ZSpace device). Changes touching real network behavior should note the client
+version (`极空间 x.y.z`) and NAS model they were verified against in the PR.
+
 ## Dev setup
 
 ```bash

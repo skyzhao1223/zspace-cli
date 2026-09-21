@@ -279,10 +279,18 @@ Pair zspace-cli with [Jellyfin / Emby / MoviePilot / MCP clients / Docker](https
 
 ## Contributing
 
-Open an issue first to discuss changes. PRs welcome — see
+PRs welcome — see
 [CONTRIBUTING.md](https://github.com/skyzhao1223/zspace-cli/blob/main/CONTRIBUTING.md) for dev setup, quality gates, and the
 skill-authoring guide (including the `skills/` ↔ `src/zspace_cli/skills/`
 dual-copy sync rule that CI enforces).
+
+- 🧭 **Not sure where to start?** Pick from
+  [CONTRIBUTION_IDEAS.md](https://github.com/skyzhao1223/zspace-cli/blob/main/docs/CONTRIBUTION_IDEAS.md)
+  (difficulty-tagged backlog, incl. reverse-engineered NAS API notes) or the
+  [`good first issue`](https://github.com/skyzhao1223/zspace-cli/labels/good%20first%20issue) label
+- 💬 Questions & showcases: [Discussions](https://github.com/skyzhao1223/zspace-cli/discussions)
+- 🔒 Security issues: private reporting via [SECURITY.md](https://github.com/skyzhao1223/zspace-cli/blob/main/SECURITY.md)
+- 🤝 This project follows the [Contributor Covenant](https://github.com/skyzhao1223/zspace-cli/blob/main/CODE_OF_CONDUCT.md)
 
 ## License
 
