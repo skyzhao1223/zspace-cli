@@ -271,9 +271,9 @@ Pair zspace-cli with [Jellyfin / Emby / MoviePilot / MCP clients / Docker](https
 - [x] Docker headless option (`ZS_BASE_URL` + `docker-compose.yml`)
 - [x] Batch glob helpers (`glob()` + `zs rm/mv/cp/down` patterns)
 - [x] Agent skill family: 8 cross-NAS organizers + `nas-report` entry, selective install (`zs skill --list/--only`)
-- [ ] Optional EXIF-based photo dating (`photo-organizer` via exiftool/mdls)
-- [ ] Per-skill config overrides (whitelist dirs / extension sets)
-- [ ] Growth-trend reports (diff two `nas-report` snapshots)
+- [ ] Optional EXIF-based photo dating (`photo-organizer` via exiftool/mdls) — [#14](https://github.com/skyzhao1223/zspace-cli/issues/14)
+- [ ] Per-skill config overrides (whitelist dirs / extension sets) — [#15](https://github.com/skyzhao1223/zspace-cli/issues/15)
+- [ ] Growth-trend reports (diff two `nas-report` snapshots) — [#16](https://github.com/skyzhao1223/zspace-cli/issues/16)
 
 ---
 
