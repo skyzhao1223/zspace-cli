@@ -122,13 +122,39 @@ def test_candidate_dirs_windows(monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\u\AppData\Local")
     monkeypatch.setenv("USERPROFILE", r"C:\Users\u")
     dirs = _candidate_dirs()
+    # No "ZSpace" spelling next to "zspace": NTFS is case-insensitive, so it
+    # is the same directory (issue #7 — "4 candidates, 3 distinct").
     expected = [
         str(Path(r"C:\Users\u\AppData\Roaming") / "zspace"),
         str(Path(r"C:\Users\u\AppData\Local") / "zspace"),
         str(Path(r"C:\Users\u") / "zspace"),
-        str(Path(r"C:\Users\u") / "ZSpace"),
     ]
     assert [str(d) for d in dirs] == expected
+
+
+def test_candidate_dirs_windows_dedupes_aliased_env(monkeypatch):
+    # APPDATA == LOCALAPPDATA (seen on some setups) must not list the same
+    # directory twice, whatever the casing used in each variable.
+    monkeypatch.setattr("zspace_cli.auth.sys.platform", "win32")
+    monkeypatch.setenv("APPDATA", r"C:\Users\u\AppData\Roaming")
+    monkeypatch.setenv("LOCALAPPDATA", r"c:\users\u\appdata\roaming")
+    monkeypatch.setenv("USERPROFILE", r"C:\Users\u")
+    dirs = _candidate_dirs()
+    assert [str(d) for d in dirs] == [
+        str(Path(r"C:\Users\u\AppData\Roaming") / "zspace"),
+        str(Path(r"C:\Users\u") / "zspace"),
+    ]
+
+
+def test_candidate_dirs_windows_fallback_without_env(monkeypatch):
+    # With none of APPDATA/LOCALAPPDATA/USERPROFILE set, fall back to
+    # Path.home()/zspace rather than returning an empty list.
+    monkeypatch.setattr("zspace_cli.auth.sys.platform", "win32")
+    monkeypatch.delenv("APPDATA", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.delenv("USERPROFILE", raising=False)
+    dirs = _candidate_dirs()
+    assert [str(d) for d in dirs] == [str(Path.home() / "zspace")]
 
 
 def test_candidate_dirs_darwin(monkeypatch):

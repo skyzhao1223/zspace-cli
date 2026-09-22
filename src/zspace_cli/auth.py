@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import ntpath
 import os
 import sys
 from dataclasses import dataclass
@@ -40,22 +41,35 @@ def _candidate_dirs() -> list[Path]:
 
     The desktop client stores its login state (``vuex.json``) in a
     platform-specific location; on macOS it's
-    ``~/Library/Application Support/zspace``. Windows/Linux paths are best-effort
-    guesses — override with ``ZS_CONFIG_DIR`` when needed.
+    ``~/Library/Application Support/zspace``, on Windows ``%APPDATA%\\zspace``
+    (confirmed on a real install — issue #7, community report 2026-09).
+    Linux paths are still best-effort guesses — override with ``ZS_CONFIG_DIR``
+    when needed.
     """
     home = Path.home()
     if sys.platform == "win32":
         appdata = os.environ.get("APPDATA")
         local = os.environ.get("LOCALAPPDATA")
         userprofile = os.environ.get("USERPROFILE")
-        dirs: list[Path] = []
-        for base in (appdata, local):
+        candidates: list[Path] = []
+        for base in (appdata, local, userprofile):
             if base:
-                dirs.append(Path(base) / "zspace")
-        if userprofile:
-            dirs.append(Path(userprofile) / "zspace")
-            dirs.append(Path(userprofile) / "ZSpace")
-        return dirs or [home / "zspace"]
+                candidates.append(Path(base) / "zspace")
+        if not candidates:
+            candidates.append(home / "zspace")
+        # NTFS is case-insensitive, so listing a "ZSpace" spelling next to
+        # "zspace" adds no coverage (issue #7: "4 candidates, 3 distinct
+        # directories"), and aliased env vars (e.g. APPDATA == LOCALAPPDATA)
+        # must not inflate the list either. Dedupe by Windows path semantics
+        # so the candidate count matches the directories actually probed.
+        seen: set[str] = set()
+        dirs: list[Path] = []
+        for d in candidates:
+            key = ntpath.normcase(str(d))
+            if key not in seen:
+                seen.add(key)
+                dirs.append(d)
+        return dirs
     if sys.platform == "darwin":
         return [home / "Library" / "Application Support" / "zspace"]
     # linux / other: flatpak, XDG, and home-dir installs
