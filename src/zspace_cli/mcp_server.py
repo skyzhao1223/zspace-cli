@@ -9,11 +9,30 @@ Usage:
 from __future__ import annotations
 
 import importlib.metadata as _md
+import sys
 from typing import Annotated, Any
 
-from mcp.server import MCPServer
-from mcp.types import ToolAnnotations
-from pydantic import Field
+try:
+    from mcp.server import MCPServer
+    from mcp.types import ToolAnnotations
+    from pydantic import Field
+except ImportError as _exc:  # pragma: no cover - only on unsupported setups
+    # The `mcp` extra is gated on python_version >= '3.10', while the package
+    # itself still supports 3.9 (CI tests both, installing .[dev] on 3.9 and
+    # .[mcp,dev] elsewhere). So `pip install "zspace-cli[mcp]"` on 3.9 quietly
+    # resolves to no mcp and no pydantic, and the console script then dies with
+    # a bare ImportError traceback that never mentions the Python version.
+    raise SystemExit(
+        "zs-mcp needs the 'mcp' extra, which requires Python 3.10 or newer.\n"
+        f"  running on        : Python {sys.version.split()[0]}\n"
+        f"  import that failed: {_exc}\n"
+        "\n"
+        "Install it on Python 3.10+ with:\n"
+        "  pip install 'zspace-cli[mcp]'\n"
+        "\n"
+        "The plain CLI (zs) still supports Python 3.9+; only the MCP server\n"
+        "needs 3.10+, because the upstream `mcp` package requires it."
+    ) from None
 
 from zspace_cli.client import ZSpaceClient, ZSpaceError
 
