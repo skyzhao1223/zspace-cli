@@ -250,6 +250,8 @@ zspace-cli/
 
 与 [Jellyfin / Emby / MoviePilot / MCP 客户端 / Docker](integrations.md) 及 [media-manager-skill](https://github.com/skyzhao1223/media-manager-skill) 配合使用媒体库工具。
 
+网盘 → NAS 备份流水线推荐搭配 [baidu-pan-skill](https://github.com/skyzhao1223/baidu-pan-skill)：它负责可靠下载百度网盘分享链接（Cookie 提取、转存、断点续传分块下载、结构化校验），然后 `zs up` 接力完成大文件分片上传。两者都是 agent skill，一句话即可驱动整条备份链路。
+
 ---
 
 ## Roadmap

@@ -262,6 +262,8 @@ zspace-cli/
 
 Pair zspace-cli with [Jellyfin / Emby / MoviePilot / MCP clients / Docker](https://github.com/skyzhao1223/zspace-cli/blob/main/docs/integrations.md) and [media-manager-skill](https://github.com/skyzhao1223/media-manager-skill) for media library tooling.
 
+For cloud-drive → NAS pipelines, combine with [baidu-pan-skill](https://github.com/skyzhao1223/baidu-pan-skill): it downloads Baidu NetDisk (百度网盘) share links reliably (cookie extraction, transfer-save, resumable chunked downloads, structural verification), then `zs up` takes over for the sliced large-file upload to the NAS. Both ship as agent skills, so one prompt can drive the whole backup.
+
 ---
 
 ## Roadmap
