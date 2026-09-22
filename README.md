@@ -294,6 +294,17 @@ dual-copy sync rule that CI enforces).
 - 🔒 Security issues: private reporting via [SECURITY.md](https://github.com/skyzhao1223/zspace-cli/blob/main/SECURITY.md)
 - 🤝 This project follows the [Contributor Covenant](https://github.com/skyzhao1223/zspace-cli/blob/main/CODE_OF_CONDUCT.md)
 
+## Legal
+
+Unofficial community project, not affiliated with or endorsed by ZSpace/极空间.
+It automates **your own** logged-in desktop client on **your own** machine —
+no passwords handled, no service gates bypassed (membership-gated features are
+documented as gated, never worked around). API notes are interoperability
+documentation of observed client behavior and may break with client updates.
+Concerns or takedown requests: `skyzhao1223@users.noreply.github.com` —
+legitimate requests are answered promptly. Source archives ship with every
+GitHub Release; the maintainer keeps off-platform `git bundle` mirrors.
+
 ## License
 
 MIT

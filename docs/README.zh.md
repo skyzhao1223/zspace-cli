@@ -280,6 +280,15 @@ zspace-cli/
 - 🔒 安全问题：私密报告，见 [SECURITY.md](../SECURITY.md)
 - 🤝 本项目遵循 [Contributor Covenant 行为准则](../CODE_OF_CONDUCT.md)
 
+## 法律声明
+
+非官方社区项目，与极空间/ZSpace 无隶属或背书关系。本项目仅在**你自己的机器**上
+自动化**你自己已登录**的桌面客户端——不接触账号密码、不绕过任何服务门槛
+（付费功能如实记录为"需要会员"，绝不提供规避手段）。仓库内 API 笔记是对客户端
+行为的互操作性记录，可能随客户端更新失效。异议或投诉请联系
+`skyzhao1223@users.noreply.github.com`，合理诉求会被及时处理。每个 GitHub
+Release 自带源码归档；维护者另在站外保留完整历史的 `git bundle` 镜像。
+
 ## 许可证
 
 MIT
