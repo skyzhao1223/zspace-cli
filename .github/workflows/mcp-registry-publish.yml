@@ -31,6 +31,31 @@ jobs:
           echo "server.json version -> $VERSION"
           jq '{name, version, packages: [.packages[].version]}' server.json
 
+      # Fail here rather than at publish time: server.json drifted out of schema
+      # compliance once already (description grew to 223 chars against a
+      # maxLength of 100), which silently blocked every registry publish for
+      # three releases. Validating against the $schema the file itself declares
+      # means a future limit change is picked up automatically.
+      - name: Validate server.json against its declared schema
+        run: |
+          python -m pip install --quiet jsonschema requests
+          python - <<'PY'
+          import json, sys, requests, jsonschema
+          doc = json.load(open("server.json", encoding="utf-8"))
+          url = doc.get("$schema")
+          if not url:
+              sys.exit("server.json has no $schema; cannot validate")
+          schema = requests.get(url, timeout=30).json()
+          errors = sorted(jsonschema.Draft202012Validator(schema).iter_errors(doc),
+                          key=lambda e: list(e.path))
+          for e in errors:
+              path = "/".join(map(str, e.path)) or "(root)"
+              print(f"::error file=server.json::schema violation at {path}: {e.message}")
+          if errors:
+              sys.exit(f"server.json failed schema validation ({len(errors)} violation(s))")
+          print(f"server.json valid against {url}")
+          PY
+
       - name: Install mcp-publisher
         run: |
           curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
