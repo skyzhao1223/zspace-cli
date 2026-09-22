@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "zspace": {
+      "command": "uvx",
+      "args": ["--from", "zspace-cli[mcp]", "zs-mcp"]
+    }
+  }
+}
