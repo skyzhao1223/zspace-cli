@@ -41,8 +41,10 @@ def _candidate_dirs() -> list[Path]:
 
     The desktop client stores its login state (``vuex.json``) in a
     platform-specific location; on macOS it's
-    ``~/Library/Application Support/zspace``. Windows/Linux paths are best-effort
-    guesses — override with ``ZS_CONFIG_DIR`` when needed.
+    ``~/Library/Application Support/zspace``, on Windows ``%APPDATA%\\zspace``
+    (confirmed on a real install — issue #7, community report 2026-09).
+    Linux paths are still best-effort guesses — override with ``ZS_CONFIG_DIR``
+    when needed.
     """
     home = Path.home()
     if sys.platform == "win32":

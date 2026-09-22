@@ -15,14 +15,15 @@ Difficulty: 🟢 easy (hours) · 🟡 medium (days) · 🔴 large (a week+)
 
 ## Core / SDK
 
-### 🟢 Windows CI + auth-path verification
-`auth.py::_candidate_dirs()` guesses Windows/Linux config locations
-(`%APPDATA%/zspace`, `~/.zspace`, …) that have never been verified on real
-installs. Add `windows-latest` to the test matrix in `.github/workflows/ci.yml`
-(unit tests are fully mocked — no NAS needed) and ask Windows ZSpace users to
-report where their `vuex.json` actually lives. Fix the guesses accordingly.
-**Why:** a large share of ZSpace users are on Windows; today they're
-second-class citizens.
+### 🟢 Linux auth-path verification (Windows: ✅ confirmed)
+Windows is **verified**: a real install keeps `vuex.json` at
+`C:\Users\<user>\AppData\Roaming\zspace` = `%APPDATA%\zspace` — exactly
+candidate #1 in `auth.py::_candidate_dirs()` (community report via issue #7,
+2026-09; `windows-latest` is in the CI matrix too). **Linux remains guessed**
+(`~/.zspace`, `~/.config/zspace`, `~/zspace`, flatpak layouts). If you run the
+ZSpace client on Linux, report your actual path in issue #7 and fix the
+candidate list + add a regression test.
+**Why:** Windows users are covered; Linux support still ships unverified.
 
 ### 🟡 Resumable sliced upload (`/v2/file/tmpinfo`)
 `client.py::_upload_sliced()` restarts from `seek=0` when a process dies.
