@@ -1,0 +1,42 @@
+name: Publish to MCP Registry
+
+# 官方模式：https://github.com/modelcontextprotocol/registry/blob/main/docs/modelcontextprotocol-io/github-actions.mdx
+# release.yml 已经会 git tag "v$VER" 并 push，所以用 tag 触发即可，
+# 不必改动现有的 PyPI Trusted Publishing 流程（避免同一 job 内两个 OIDC audience 相互干扰）。
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # OIDC 认证必需
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      # server.json 里的 version 必须与 tag 一致，否则 registry 会记录错版本。
+      # 仓库目前是手工维护的（曾出现 registry 停在 0.1.4 而 PyPI 已到 0.1.7 的漂移），
+      # 这一步把它变成自动同步，从根上消除漂移。
+      - name: Sync version into server.json
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          jq --arg v "$VERSION" '
+            .version = $v
+            | (.packages[]? | select(.registryType == "pypi") | .version) = $v
+          ' server.json > server.tmp && mv server.tmp server.json
+          echo "server.json version -> $VERSION"
+          jq '{name, version, packages: [.packages[].version]}' server.json
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+      - name: Authenticate to MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish server to MCP Registry
+        run: ./mcp-publisher publish
