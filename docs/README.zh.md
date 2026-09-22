@@ -14,6 +14,8 @@
 用命令行或 AI Agent 管理你的**极空间 NAS** —— 不填密码、不开 SSH、不配 DDNS。
 
 > 只要 macOS 上极空间桌面客户端已登录即可。
+>
+> 📖 大文件分片上传协议的诞生记：[《一次 1.4GB 备份引发的逆向》（CSDN）](https://blog.csdn.net/boyzhaotian/article/details/166349848) · 图文教程：[《极空间 NAS 命令行管理指南》（CSDN）](https://blog.csdn.net/boyzhaotian/article/details/166349965)
 
 [**新手指南**](beginner-guide.zh.md)（零代码基础） · [Skills 说明](../skills/README.md)（含 **8 个跨 NAS 整理 skill**） · [English README](../README.md)
 

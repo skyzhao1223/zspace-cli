@@ -16,6 +16,8 @@ Manage your 极空间 (ZSpace) NAS from the terminal or AI agents — **no passw
 mcp-name: io.github.skyzhao1223/zspace-cli
 
 > Just keep the ZSpace desktop client logged in on macOS.
+>
+> 📖 How large-file sliced upload was born: [一次 1.4GB 备份引发的逆向 (zh, CSDN)](https://blog.csdn.net/boyzhaotian/article/details/166349848) · CLI guide: [极空间 NAS 命令行管理指南 (zh, CSDN)](https://blog.csdn.net/boyzhaotian/article/details/166349965)
 
 [**Beginner guide**](https://github.com/skyzhao1223/zspace-cli/blob/main/docs/beginner-guide.md) (no coding required) · [Skills](https://github.com/skyzhao1223/zspace-cli/blob/main/skills/README.md) — incl. **8 cross-NAS organizer skills** for AI agents · [中文文档](https://github.com/skyzhao1223/zspace-cli/blob/main/docs/README.zh.md)
 
