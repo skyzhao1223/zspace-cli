@@ -367,7 +367,7 @@ def _parse_ts(value: str | None) -> datetime | None:
         return None
 
 
-def diff_reports(old: dict, new: dict) -> dict:
+def diff_reports(old: dict, new: dict, capacity_gb: float | None = None) -> dict:
     """两份 nas-report 快照的差分(纯函数,无 IO,便于单测)。
 
     边界要说在前面,因为它决定这份差分**能**回答什么:
@@ -420,8 +420,16 @@ def diff_reports(old: dict, new: dict) -> dict:
                  "gb": round((r.get("size") or 0) / 1e9, 3),
                  "category": r.get("category")} for r in rows]
 
+    eta_days = None
+    if capacity_gb and per_day and per_day > 0 and not time_reversed:
+        remain = capacity_gb * 1e9 - (sn.get("total_size_bytes") or 0)
+        if remain > 0:
+            eta_days = round(remain / per_day, 1)
+
     return {
         "skill": "nas-report.diff",
+        "capacity_gb": capacity_gb,
+        "eta_days": eta_days,
         "old": {"generated_at": old.get("generated_at"), "root": old.get("root")},
         "new": {"generated_at": new.get("generated_at"), "root": new.get("root")},
         "same_root": old.get("root") == new.get("root"),
@@ -444,8 +452,10 @@ def diff_reports(old: dict, new: dict) -> dict:
         "file_lists_truncated": True,      # 快照只留 top-N,这不是全库文件级 diff
         "capacity_note": "快照里没有容量/可用空间字段；给 --capacity-gb 才能算 ETA",
         "warnings": [w for w in (
-            "两份快照的 root 不同,差分仍然成立但读者要知道" if old.get("root") != new.get("root") else None,
-            "新的这份 generated_at 早于旧的——顺序反了,速率与增量都不解读" if time_reversed else None,
+            ("两份快照的 root 不同,差分仍然成立但读者要知道"
+             if old.get("root") != new.get("root") else None),
+            ("新的这份 generated_at 早于旧的——顺序反了,"
+             "速率与增量都不解读" if time_reversed else None),
             "old 侧 truncated=True：那份画像本来就不完整" if so.get("truncated") else None,
             "new 侧 truncated=True：那份画像本来就不完整" if sn.get("truncated") else None,
         ) if w],
@@ -471,8 +481,8 @@ def _print_diff_human(d: dict, top: int, capacity_gb: float | None) -> None:
         if capacity_gb:
             remain = capacity_gb * 1e9 - t["bytes_after"]
             rate = d["growth_bytes_per_day"]
-            if rate > 0 and remain > 0:
-                print(f"距满盘: 还剩 {_human(remain)}（按当前速率 ≈ {remain / rate:.0f} 天）")
+            if d.get("eta_days") is not None:
+                print(f"距满盘: 还剩 {_human(remain)}（按当前速率 ≈ {d['eta_days']:.0f} 天）")
             elif rate <= 0:
                 print("距满盘: 本次是净减少,没有 ETA")
             else:
@@ -485,7 +495,8 @@ def _print_diff_human(d: dict, top: int, capacity_gb: float | None) -> None:
         print("\n【按类别】")
         for cat, e in list(d["by_category"].items())[:top]:
             print(f"  {CAT_ZH.get(cat, cat):<8} {e['count_added']:+7d} 个  "
-                  f"{e['gb_added']:+8.3f} GB   ({_human(e['bytes_before'])} → {_human(e['bytes_after'])})")
+                  f"{e['gb_added']:+8.3f} GB   "
+                  f"({_human(e['bytes_before'])} → {_human(e['bytes_after'])})")
     else:
         print("\n【按类别】无变化")
     if d["toplevel"]:
@@ -495,11 +506,11 @@ def _print_diff_human(d: dict, top: int, capacity_gb: float | None) -> None:
     if d["new_large_files"]:
         print(f"\n【新出现的大文件】Top {top}（只在两份榜单内比较,不是全库 diff）")
         for f in d["new_large_files"][:top]:
-            print(f"  {_human(f['size']):>9}  {f['path']}")
+            print(f"  {_human(f.get('size') or 0):>9}  {f['path']}")
     if d["gone_large_files"]:
         print(f"\n【从榜单消失的大文件】Top {top}")
         for f in d["gone_large_files"][:top]:
-            print(f"  {_human(f['size']):>9}  {f['path']}")
+            print(f"  {_human(f.get('size') or 0):>9}  {f['path']}")
     print("=" * 70)
 
 
@@ -534,10 +545,10 @@ def main() -> None:
         try:
             old = json.loads(Path(args.old).read_text(encoding="utf-8"))
             new = json.loads(Path(args.new).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, ValueError) as exc:
             print(f"❌ 读不了快照: {exc}", file=sys.stderr)
             raise SystemExit(2) from exc
-        d = diff_reports(old, new)
+        d = diff_reports(old, new, args.capacity_gb)
         if args.json:
             json.dump(d, sys.stdout, ensure_ascii=False, indent=2)
             print()
