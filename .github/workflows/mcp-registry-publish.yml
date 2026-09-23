@@ -5,12 +5,25 @@ name: Publish to MCP Registry
 # 不必改动现有的 PyPI Trusted Publishing 流程（避免同一 job 内两个 OIDC audience 相互干扰）。
 
 on:
+  # release.yml pushes the v* tag with the default GITHUB_TOKEN (actions/checkout
+  # without an explicit `token:`), and per GitHub's docs "events triggered by the
+  # GITHUB_TOKEN will not create a new workflow run" — except workflow_dispatch
+  # and repository_dispatch. So a bare `push: tags` trigger never fires here.
+  # workflow_run is the automatic path; workflow_dispatch covers backfills.
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  workflow_dispatch:
   push:
-    tags: ["v*"]
+    tags: ["v*"]   # still works for tags pushed by hand or with a PAT
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Do not publish on the back of a failed release.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     permissions:
       id-token: write   # OIDC 认证必需
       contents: read
@@ -23,7 +36,20 @@ jobs:
       # 这一步把它变成自动同步，从根上消除漂移。
       - name: Sync version into server.json
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          # Derive from the newest tag, not GITHUB_REF: under workflow_run and
+          # workflow_dispatch the ref is the default branch, not a tag.
+          # ls-remote is used instead of `git describe` because the checkout is
+          # shallow (fetch-depth defaults to 1), where tag reachability is fragile.
+          VERSION=${GITHUB_REF#refs/tags/}
+          if [ "$VERSION" = "$GITHUB_REF" ] || [ -z "$VERSION" ]; then
+            VERSION=$(git ls-remote --tags --refs origin \
+              | awk -F/ '{print $NF}' | sed 's/^v//' \
+              | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+          fi
+          if [ -z "$VERSION" ]; then
+            echo "::error::no tag found; cannot determine the version to publish"
+            exit 1
+          fi
           jq --arg v "$VERSION" '
             .version = $v
             | (.packages[]? | select(.registryType == "pypi") | .version) = $v
