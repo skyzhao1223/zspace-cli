@@ -55,6 +55,25 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+      - name: tag + GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}   # gh CLI requires this in Actions
+        run: |
+          VER=$(python -c "import re,pathlib; m=re.search(r'^version\s*=\s*\"([^\"]+)\"', pathlib.Path('pyproject.toml').read_text(), re.M); print(m.group(1))")
+          git add -A
+          git -c user.email="actions@github.com" -c user.name="GitHub Actions" \
+            commit -q -m "chore: release v$VER"
+          git tag "v$VER"
+          git push && git push origin "v$VER"
+          gh release create "v$VER" --repo "${{ github.repository }}" \
+            --title "zspace-cli v$VER" --generate-notes
+
+      # Order matters: PyPI publishing and the git tag are irreversible / load-bearing,
+      # while the multi-arch image build is a derivative artifact and the most likely step
+      # to fail (QEMU-emulated arm64). Tag and cut the release first so a Docker failure
+      # cannot leave a published PyPI version with no tag, no GitHub Release, and no
+      # MCP Registry publish (the registry workflow is triggered by the v* tag push).
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
@@ -81,15 +100,3 @@ jobs:
           push: true
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
-      - name: tag + GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}   # gh CLI requires this in Actions
-        run: |
-          VER=$(python -c "import re,pathlib; m=re.search(r'^version\s*=\s*\"([^\"]+)\"', pathlib.Path('pyproject.toml').read_text(), re.M); print(m.group(1))")
-          git add -A
-          git -c user.email="actions@github.com" -c user.name="GitHub Actions" \
-            commit -q -m "chore: release v$VER"
-          git tag "v$VER"
-          git push && git push origin "v$VER"
-          gh release create "v$VER" --repo "${{ github.repository }}" \
-            --title "zspace-cli v$VER" --generate-notes
