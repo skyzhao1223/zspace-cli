@@ -1,0 +1,62 @@
+{
+  "skill": "nas-report",
+  "root": "/Volumes/nas/data",
+  "generated_at": "2026-09-11T00:00:00",
+  "stats": {
+    "total_files": 120,
+    "total_dirs": 12,
+    "total_size_bytes": 1500000000,
+    "by_category": {
+      "video": {
+        "count": 12,
+        "size": 1200000000
+      },
+      "photo": {
+        "count": 108,
+        "size": 300000000
+      }
+    },
+    "by_growth": {
+      "hot_30d": {
+        "count": 10,
+        "size": 300000000
+      },
+      "cold_3y+": {
+        "count": 50,
+        "size": 400000000
+      }
+    },
+    "largest_files": [
+      {
+        "path": "/data/media/a.mkv",
+        "size": 700000000,
+        "category": "video"
+      },
+      {
+        "path": "/data/media/c.mkv",
+        "size": 300000000,
+        "category": "video"
+      }
+    ],
+    "largest_dirs": [
+      {
+        "path": "/data/media",
+        "size": 1400000000,
+        "files": 110
+      }
+    ],
+    "toplevel": {
+      "media": {
+        "count": 110,
+        "size": 1450000000
+      },
+      "docs": {
+        "count": 10,
+        "size": 50000000
+      }
+    },
+    "elapsed_sec": 1.2,
+    "truncated": false
+  },
+  "recommendations": []
+}
