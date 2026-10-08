@@ -60,6 +60,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}   # gh CLI requires this in Actions
         run: |
           VER=$(python -c "import re,pathlib; m=re.search(r'^version\s*=\s*\"([^\"]+)\"', pathlib.Path('pyproject.toml').read_text(), re.M); print(m.group(1))")
+          # Keep the committed server.json truthful. mcp-registry-publish.yml
+          # rewrites its *own* checkout from the tag, so the registry is fine —
+          # but nothing ever updated the file in the repo, and it had drifted to
+          # 0.1.7 while 0.1.9 was what shipped. Syncing here means the release
+          # commit carries it and it can never drift again.
+          VER="$VER" python - <<'EOF'
+          import json, os, pathlib
+          ver = os.environ["VER"]
+          p = pathlib.Path("server.json")
+          data = json.loads(p.read_text(encoding="utf-8"))
+          data["version"] = ver
+          for pkg in data.get("packages", []):
+              if pkg.get("registryType") == "pypi":
+                  pkg["version"] = ver
+          p.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+                       encoding="utf-8")
+          print("server.json synced to", ver)
+          EOF
           git add -A
           git -c user.email="actions@github.com" -c user.name="GitHub Actions" \
             commit -q -m "chore: release v$VER"

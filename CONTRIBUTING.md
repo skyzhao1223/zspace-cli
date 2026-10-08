@@ -156,10 +156,12 @@ owner `skyzhao1223`, repo `zspace-cli`, workflow `release.yml`, environment
 left blank. If that config drifts (e.g. the workflow file is renamed), the
 publish step fails with 403.
 
-> `server.json` (MCP registry metadata) **is** auto-bumped now: the tag-triggered
-> `mcp-registry-publish.yml` rewrites both `version` fields from the newest `v*`
-> tag before publishing. Don't hand-edit them — a manual value just gets
-> overwritten (and if it disagrees with the tag, the registry records the tag).
+> `server.json` (MCP registry metadata) needs **no manual bump**: `release.yml`
+> rewrites both `version` fields from the just-bumped `pyproject.toml` inside the
+> `tag + GitHub Release` step, so the release commit carries them. Separately,
+> the tag-triggered `mcp-registry-publish.yml` derives the version from the newest
+> `v*` tag for its own publish. (Before that, the committed file silently drifted
+> — it still said `0.1.7` after `0.1.9` shipped.)
 
 ## PR checklist
 
