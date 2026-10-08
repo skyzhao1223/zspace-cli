@@ -77,6 +77,37 @@ jobs:
             exit 1
           fi
           echo "all skill copies in sync"
+      - name: Docs state the right number of skills
+        shell: bash
+        run: |
+          # Hardcoded counts went stale three times in a row (8 → 9 → 10, each in
+          # a different direction), including a beginner-guide verification step
+          # that made a successful install look like a failure. Assert them
+          # instead of remembering to update them.
+          total=$(ls -d skills/*/ | wc -l | tr -d ' ')
+          org=$((total - 1))          # minus zspace-nas (the base, not an organizer)
+          echo "zs skill installs $total; $org cross-NAS organizers"
+          fail=0
+          ORG_RE="[0-9]+ (cross-NAS organizer skills|read-only organizer skills|个跨 NAS 整理 skill|个整理/审计 skill)"
+          DOCS="README.md docs/README.zh.md docs/integrations.md skills/README.md"
+          stale=$(grep -ohE "$ORG_RE" $DOCS | grep -v "^$org " || true)
+          [ -n "$stale" ] && { echo "STALE organizer count:"; echo "$stale"; fail=1; }
+          stale2=$(grep -ohE "已复制 [0-9]+ 个 skill" docs/beginner-guide.zh.md docs/beginner-guide.md \
+                  | grep -v "已复制 $total 个 skill" || true)
+          [ -n "$stale2" ] && { echo "STALE installed count:"; echo "$stale2"; fail=1; }
+          # Guard against this check silently matching nothing (wording changed
+          # → the grep returns empty → the assertion passes vacuously).
+          found=$(grep -ohE "$ORG_RE" $DOCS | wc -l | tr -d ' ')
+          if [ "$found" -lt 4 ]; then
+            echo "only $found matches (expected >= 4) — the wording changed and this"
+            echo "check is now vacuous; update ORG_RE alongside the docs"
+            fail=1
+          fi
+          if [ $fail -ne 0 ]; then
+            echo "Fix the counts. If a skill was just added/removed, this is the reminder."
+            exit 1
+          fi
+          echo "documented skill counts match reality"
       - name: Smoke tests (offline fixtures, py3.9 = min supported)
         shell: bash
         env:
