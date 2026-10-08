@@ -79,10 +79,6 @@ the NAS's Vue app; upload/task logic lives in lazy chunks (search
 
 ## Skills family
 
-### 🟢 EXIF-based photo dating (`photo-organizer`) — roadmap
-Optional `--exif` mode using `exiftool`/`mdls` when available, falling back to
-mtime. Pure stdlib constraint means shelling out; keep it opt-in.
-
 ### 🟡 Per-skill config overrides — roadmap
 Whitelist dirs / extension sets via a `skills/<name>/config.json` overlay so
 scanners stop flagging intentional structures. Two concrete consumers today:
@@ -91,6 +87,17 @@ like `.rfa`/`.pln` currently needs a code edit to land in the right folder) and
 its `--keep-dir` whitelist (per-library, so it gets re-typed every run).
 
 > ✅ Shipped since this list was written:
+> - **`photo-organizer --exif`** — was "EXIF-based photo dating", roadmap #14.
+>   Dating chain `filename → exiftool -DateTimeOriginal → mdls (macOS) → mtime`,
+>   opt-in and pure stdlib (shells out, no third-party import). The default path
+>   is byte-for-byte unchanged. It reports `stats.date_sources` counts and tags
+>   each date, because the failure mode that matters is a run where every file
+>   silently fell back to mtime and looks like it worked. exiftool is batched
+>   (200 paths + `-json`); `mdls` is not, and cannot be: a multi-file `mdls`
+>   prints one bare `kMDItemContentCreationDate = …` line per file with **no
+>   filename header**, so results could only be matched to files by position —
+>   and a single gap would silently file one photo under another's date. Per-file
+>   `mdls` costs ~25 ms measured locally, which is why exiftool is tried first.
 > - `nas-report diff OLD.json NEW.json` (growth by category/dir, new+vanished
 >   large files, rate & ETA) — was "Growth-trend reports", roadmap #16.
 > - **Windows execution path in every SKILL.md** — was "…in the other 8 skills".
