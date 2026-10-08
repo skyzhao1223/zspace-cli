@@ -79,10 +79,6 @@ the NAS's Vue app; upload/task logic lives in lazy chunks (search
 
 ## Skills family
 
-### 🟢 EXIF-based photo dating (`photo-organizer`) — roadmap
-Optional `--exif` mode using `exiftool`/`mdls` when available, falling back to
-mtime. Pure stdlib constraint means shelling out; keep it opt-in.
-
 ### 🟡 Per-skill config overrides — roadmap
 Whitelist dirs / extension sets via a `skills/<name>/config.json` overlay so
 scanners stop flagging intentional structures. Two concrete consumers today:
@@ -91,6 +87,9 @@ like `.rfa`/`.pln` currently needs a code edit to land in the right folder) and
 its `--keep-dir` whitelist (per-library, so it gets re-typed every run).
 
 > ✅ Shipped since this list was written:
+> - `photo-organizer --exif` (roadmap #14) — shells out to `exiftool`, falls back
+>   to macOS `mdls` (Spotlight), then to mtime; opt-in so the default path is
+>   byte-identical to before and the pure-stdlib rule still holds.
 > - `nas-report diff OLD.json NEW.json` (growth by category/dir, new+vanished
 >   large files, rate & ETA) — was "Growth-trend reports", roadmap #16.
 > - **Windows execution path in every SKILL.md** — was "…in the other 8 skills".
