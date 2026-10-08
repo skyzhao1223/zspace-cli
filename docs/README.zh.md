@@ -78,7 +78,7 @@ zs skill ~/your-project/skills/ --only nas-report,photo-organizer   # 或按需�
 |-------|----------|
 | **nas-report** | 🧭 入口/元技能：全盘存储画像 + 按发现路由到专项 skill |
 | **file-sorter** | 🧹 任意混合目录：认 **255 种扩展名、分 15 类**（图片 / 视频 / 音频 / 文档 / 电子书 / 压缩包 / 安装包 / 字体 / 代码 / 设计源文件 / 图纸CAD / 备份镜像…），算好每个文件的 `old → new`；认 **135 个目录名别名**（简繁中英），已整理好的库不会被重搬；默认不打散项目目录 |
-| **photo-organizer** | 照片/视频：按拍摄日期归档、截图/微信图识别、连拍去重 |
+| **photo-organizer** | 照片/视频：按拍摄日期归档（`--exif` 经 exiftool、macOS 上再退 mdls 读真实拍摄日期）、截图/微信图识别、连拍去重 |
 | **music-organizer** | 音乐库：歌手/专辑/曲目三层结构、曲目号、封面、内置 ID3v2 解析对照标签 |
 | **work-organizer** | 工作文件：散文件归档、版本混乱、副本清理、过期归档 |
 | **portfolio-organizer** | 作品集：项目结构、封面/说明、成品与源文件分离 |
