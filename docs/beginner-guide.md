@@ -108,7 +108,8 @@ mkdir -p ~/my-nas
 zs skill ~/my-nas/skills/
 ```
 
-- ✅ Shows `OK copied 9 skills` → done
+- ✅ Shows `OK 已复制 10 个 skill` → done (the CLI prints Chinese; the count
+  grows as skills are added, so a higher number is fine, not an error)
 - Only want a few? `zs skill --list` to browse, then
   `zs skill ~/my-nas/skills/ --only nas-report,photo-organizer`
 
@@ -158,7 +159,7 @@ you'll get a plan; you just execute it yourself.
 
 ## Next
 
-- What each of the 9 skills does + trigger phrases: [skills/README.md](../skills/README.md)
+- What each skill does + trigger phrases: [skills/README.md](../skills/README.md)
 - Full command & technical docs: [root README](../README.md)
 - Stuck or ideas: [open an issue](https://github.com/skyzhao1223/zspace-cli/issues) —
   beginner questions are especially welcome; your question becomes the next person's docs
