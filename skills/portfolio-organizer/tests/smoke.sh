@@ -146,4 +146,26 @@ echo "=== TEST 5: --help ==="
 echo "  ✓ CLI help 可用"
 
 echo ""
+echo "=== TEST 6: 非 UTF-8 stdout 不崩(Windows / Agent 捕获输出场景) ==="
+# Windows 上 stdout 被重定向时 Python 用 locale 编码(cp1252/GBK)而非 UTF-8,
+# 报告里的中文会 UnicodeEncodeError 让整个扫描中断 —— AI Agent 捕获输出正是此场景。
+ENC_DIR="$(mktemp -d /tmp/portfolioo-enc.XXXXXX)"
+mkdir -p "$ENC_DIR/图纸"
+printf 'x' > "$ENC_DIR/图纸/平面.dwg"
+printf 'y' > "$ENC_DIR/合同.pdf"
+rc_utf8=0; rc_ascii=0
+out_utf8=$(PYTHONIOENCODING=utf-8 "$PY" "$SKILL_DIR/portfolio_organizer.py" scan --root "$ENC_DIR" 2>&1) || rc_utf8=$?
+out_ascii=$(PYTHONIOENCODING=ascii "$PY" "$SKILL_DIR/portfolio_organizer.py" scan --root "$ENC_DIR" 2>&1) || rc_ascii=$?
+rm -rf "$ENC_DIR"
+if echo "$out_ascii" | grep -q "UnicodeEncodeError"; then
+  echo "  ❌ ascii stdout 下 UnicodeEncodeError — 中文报告把输出编码搞崩了"
+  echo "     需要脚本里的 _force_utf8_stdio() 兜底"
+  exit 1
+fi
+if [ "$rc_utf8" != "$rc_ascii" ]; then
+  echo "  ❌ 退出码随 stdout 编码变化: utf-8=$rc_utf8 ascii=$rc_ascii"
+  exit 1
+fi
+echo "  ✓ ascii stdout 下行为与 utf-8 一致(exit=$rc_ascii),中文不崩"
+
 echo "🎉 所有 smoke test 通过"

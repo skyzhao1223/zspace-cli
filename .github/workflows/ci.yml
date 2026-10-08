@@ -37,17 +37,28 @@ jobs:
       - run: python -m pyright
 
   skills:
-    runs-on: ubuntu-latest
+    # Windows is in the matrix because these scanners are advertised as
+    # cross-platform and 极空间 ships a Windows client — yet until now every
+    # smoke test only ever ran on Linux. Real bug it caught: printing Chinese to
+    # a redirected stdout raises UnicodeEncodeError under a non-UTF-8 locale
+    # encoding (cp1252/GBK), which is exactly how an AI agent invokes them.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.9"
       - name: Lint skill scripts
+        shell: bash
         run: |
           pip install "ruff>=0.11"
           ruff check skills
       - name: Verify packaged skill copies are in sync
+        shell: bash
         run: |
           fail=0
           for d in skills/*/; do
@@ -67,7 +78,20 @@ jobs:
           fi
           echo "all skill copies in sync"
       - name: Smoke tests (offline fixtures, py3.9 = min supported)
+        shell: bash
+        env:
+          # windows-latest has no python3.exe, only python.exe
+          PY: ${{ matrix.os == 'windows-latest' && 'python' || 'python3' }}
+          # The smoke scripts' own inline python heredocs print ✓/❌/中文, which
+          # raises UnicodeEncodeError under Windows' cp1252 redirected stdout —
+          # the same class of bug the scanners just got fixed for. Scoped to
+          # stdio only (not PYTHONUTF8=1, which would also silently change
+          # open()'s default encoding and could mask a real bug). The encoding
+          # regression test inside each smoke.sh still sets =ascii per-command,
+          # which overrides this and keeps testing the scanner's own guard.
+          PYTHONIOENCODING: utf-8
         run: |
+          echo "using PY=$PY ($($PY -V 2>&1))"
           for d in skills/*/; do
             [ -f "$d/tests/smoke.sh" ] || continue
             echo "::group::smoke $d"
