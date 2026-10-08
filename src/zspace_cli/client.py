@@ -414,6 +414,7 @@ class ZSpaceClient:
         remote_dir: str,
         new_name: str | None = None,
         progress: ProgressCallback | None = None,
+        verify: bool = False,
     ) -> dict[str, Any]:
         """Upload a local file to a directory on the NAS.
 
@@ -421,6 +422,7 @@ class ZSpaceClient:
         ``remote_dir`` — destination directory, e.g. ``/sata11/my/data/影视``.
         ``new_name``   — optional target filename (defaults to local basename).
         ``progress``   — optional callback ``(bytes_done, bytes_total)``.
+        ``verify``     — download the uploaded file and compare its MD5 with the local file.
 
         Small files go through ``/v2/file/create`` in a single request. Large
         files (> ``slice_threshold``) use the desktop client's sliced
@@ -436,7 +438,8 @@ class ZSpaceClient:
         total = local.stat().st_size
 
         if total > self.slice_threshold:
-            return self._upload_sliced(local, target, total, progress)
+            result = self._upload_sliced(local, target, total, progress)
+            return self._finish_upload(result, local, target, verify)
 
         last_exc: BaseException | None = None
         create_headers: dict[str, Any] = {
@@ -455,11 +458,13 @@ class ZSpaceClient:
                         content=reader,  # stream the file — don't buffer GBs into memory
                         headers=create_headers,
                     )
-                    return self._check_response(resp).get("data", {})
+                    result = self._check_response(resp).get("data", {})
+                    return self._finish_upload(result, local, target, verify)
                 except httpx.HTTPStatusError as exc:
                     if exc.response.status_code == 413:
                         # body too large for the local proxy — switch to slices
-                        return self._upload_sliced(local, target, total, progress)
+                        result = self._upload_sliced(local, target, total, progress)
+                        return self._finish_upload(result, local, target, verify)
                     if not self._is_retryable(exc) or attempt >= self.max_retries:
                         raise
                     last_exc = exc
@@ -472,6 +477,33 @@ class ZSpaceClient:
                     last_exc = exc
                     time.sleep(min(self.retry_delay * (2**attempt), 2.0))
         raise last_exc  # type: ignore[misc]
+
+    def _finish_upload(
+        self,
+        result: dict[str, Any],
+        local: Path,
+        target: str,
+        verify: bool,
+    ) -> dict[str, Any]:
+        """Optionally verify an uploaded file before returning its result."""
+        if verify:
+            self._verify_upload(local, target)
+        return result
+
+    def _verify_upload(self, local: Path, target: str) -> None:
+        """Round-trip an uploaded file and compare its MD5 with the local source."""
+        import tempfile
+
+        local_md5 = _file_md5(local)
+        with tempfile.TemporaryDirectory(prefix="zspace-verify-") as temp_dir:
+            downloaded = self.download(target, temp_dir)
+            remote_md5 = _file_md5(downloaded)
+
+        if remote_md5 != local_md5:
+            raise ZSpaceError(
+                "verify",
+                f"上传校验失败: MD5 不匹配 (local={local_md5}, remote={remote_md5})",
+            )
 
     def _upload_sliced(
         self,
@@ -634,6 +666,15 @@ class ZSpaceClient:
             acc.append(node)
             if e.is_dir:
                 self._tree_walk(e.path, depth + 1, max_depth, acc, seen)
+
+
+def _file_md5(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    """Return the MD5 digest of a file without loading it all into memory."""
+    digest = hashlib.md5()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(chunk_size), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _urlencode(s: str) -> str:

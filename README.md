@@ -46,6 +46,7 @@ zs ls /sata11/my/data/影视
 zs find "权力的游戏"                  # full-text search
 zs tree /sata11/my/data -d 3
 zs up ./本地文件.mp4 /sata11/my/data/影视   # upload
+zs up ./本地文件.mp4 /sata11/my/data/影视 --verify  # upload + MD5 round-trip check
 zs down /sata11/my/data/影视/某文件.mkv ./下载 # download
 ```
 
@@ -73,7 +74,7 @@ with ZSpaceClient() as zs:
 | `zs rm <path>` | Delete (`-f/--force` skips confirmation) |
 | `zs find <keyword> [path]` | Full-text search across the NAS |
 | `zs tree [path]` | Tree view (`-d/--depth N`, default 2) |
-| `zs up <local> <remote_dir>` | Upload (`-n/--name` to rename remotely; large files auto-switch to sliced upload) |
+| `zs up <local> <remote_dir>` | Upload (`-n/--name` to rename; `--verify` for post-upload MD5 round-trip verification; large files auto-switch to sliced upload) |
 | `zs down <path> [dir]` | Download |
 | `zs skill <dir>` | Copy Agent skills into a project (`--list`, `--only a,b`) |
 | `zs --config-dir <dir>` | Point at a non-default `vuex.json` location (or `ZS_CONFIG_DIR`) |
@@ -82,7 +83,7 @@ with ZSpaceClient() as zs:
 machine-readable output. `zs mv`/`zs cp`/`zs rm`/`zs down` accept `* ?` glob
 patterns on the source path.
 
-> `ls` pages through large directories automatically (the NAS API returns at most 50 entries per call). `find` uses the NAS full-text index, so it searches across directories. Upload/download show a progress bar on a real terminal and stream the file (no full-file buffering). CJK paths work out of the box. Files above 64 MB are uploaded through the desktop client's sliced `/v2/file/upload` protocol (2 MB slices), because the local proxy rejects oversized single-request bodies with HTTP 413; a 413 on a smaller file falls back to slices automatically.
+> `ls` pages through large directories automatically (the NAS API returns at most 50 entries per call). `find` uses the NAS full-text index, so it searches across directories. Upload/download show a progress bar on a real terminal and stream the file (no full-file buffering). Pass `--verify` to `zs up` to download the uploaded file to a temporary directory and compare its MD5 with the local source; verification is opt-in because it doubles transfer. CJK paths work out of the box. Files above 64 MB are uploaded through the desktop client's sliced `/v2/file/upload` protocol (2 MB slices), because the local proxy rejects oversized single-request bodies with HTTP 413; a 413 on a smaller file falls back to slices automatically.
 
 ---
 
@@ -99,7 +100,7 @@ patterns on the source path.
 | Delete | `zs rm <path>` | `client.remove(path)` | `zspace_remove` |
 | Search | `zs find <keyword>` | `client.search(kw)` | `zspace_search` |
 | Tree view | `zs tree [path]` | `client.tree(path)` | `zspace_tree` |
-| Upload | `zs up <local> <dir>` | `client.upload(local, dir)` | `zspace_upload` |
+| Upload | `zs up <local> <dir>` | `client.upload(local, dir, verify=False)` | `zspace_upload` |
 | Download | `zs down <path> [dir]` | `client.download(path, dir)` | `zspace_download` |
 | Health check | `zs check` | `client.is_connected()` | `zspace_check` |
 

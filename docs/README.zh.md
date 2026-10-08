@@ -23,6 +23,9 @@
   <img src="assets/demo.gif" alt="zspace-cli 终端演示" width="720">
 </p>
 
+
+> `zs up --verify` 会在上传完成后回读文件并比较 MD5；该校验默认关闭，因为会增加一次完整下载传输。
+
 ---
 
 ## 安装
@@ -44,6 +47,7 @@ zs ls /sata11/my/data/影视                 # 列目录
 zs find "权力的游戏"                        # 全文搜索（跨目录）
 zs tree /sata11/my/data -d 3               # 树形浏览
 zs up ./本地文件.mp4 /sata11/my/data/影视    # 上传
+zs up ./本地文件.mp4 /sata11/my/data/影视 --verify  # 上传后 MD5 回读校验
 zs down /sata11/my/data/影视/某文件.mkv ./下载 # 下载
 ```
 

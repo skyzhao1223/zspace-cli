@@ -1,6 +1,7 @@
 """Tests for zspace_cli.client — API URL construction, paging, upload/download."""
 
-from unittest.mock import MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -524,6 +525,53 @@ def test_upload_reports_progress(client, tmp_path):
     client.upload(src, "/dst", progress=lambda done, total: seen.append((done, total)))
     assert seen
     assert seen[-1] == (5, 5)
+
+
+def test_upload_verify_round_trip_matches(client, tmp_path):
+    src = tmp_path / "hello.txt"
+    src.write_bytes(b"hello")
+
+    client._http.post.return_value = _resp_mock("200", {"name": "hello.txt"})
+
+    def fake_download(remote_path, local_dir):
+        assert remote_path == "/dst/hello.txt"
+        out = Path(local_dir) / "hello.txt"
+        out.write_bytes(b"hello")
+        return out
+
+    with patch.object(client, "download", side_effect=fake_download) as download:
+        result = client.upload(src, "/dst", verify=True)
+
+    assert result["name"] == "hello.txt"
+    download.assert_called_once()
+
+
+def test_upload_verify_mismatch_raises(client, tmp_path):
+    src = tmp_path / "hello.txt"
+    src.write_bytes(b"hello")
+    client._http.post.return_value = _resp_mock("200", {"name": "hello.txt"})
+
+    def fake_download(_remote_path, local_dir):
+        out = Path(local_dir) / "hello.txt"
+        out.write_bytes(b"corrupted")
+        return out
+
+    with patch.object(client, "download", side_effect=fake_download):
+        with pytest.raises(ZSpaceError, match="MD5 不匹配") as exc:
+            client.upload(src, "/dst", verify=True)
+
+    assert exc.value.code == "verify"
+
+
+def test_upload_verify_is_opt_in(client, tmp_path):
+    src = tmp_path / "hello.txt"
+    src.write_bytes(b"hello")
+    client._http.post.return_value = _resp_mock("200", {"name": "hello.txt"})
+
+    with patch.object(client, "download") as download:
+        client.upload(src, "/dst")
+
+    download.assert_not_called()
 
 
 def test_download_reports_progress(client, tmp_path):

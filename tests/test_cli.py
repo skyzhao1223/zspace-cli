@@ -197,6 +197,14 @@ def test_cli_up():
     assert "已上传" in out
 
 
+def test_cli_up_verify():
+    local = Path("/tmp/some-local-file.txt")
+    r, out, c = _run_cmd("up", str(local), "/d", "--verify")
+    assert r.exit_code == 0
+    assert "MD5 完整性校验通过" in out
+    assert c.upload.call_args.kwargs["verify"] is True
+
+
 def test_cli_down():
     r, out, _ = _run_cmd("down", "/d/a.txt", "/tmp")
     assert r.exit_code == 0

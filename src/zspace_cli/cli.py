@@ -389,6 +389,7 @@ def up(
     local: Path = typer.Argument(..., help="本地文件路径"),
     remote_dir: str = typer.Argument(..., help="NAS 目标目录"),
     name: str = typer.Option(None, "--name", "-n", help="上传后的文件名（默认用本地文件名）"),
+    verify: bool = typer.Option(False, "--verify", help="上传后下载并比较 MD5 完整性"),
 ):
     """上传本地文件到 NAS"""
     with _client() as c:
@@ -408,9 +409,12 @@ def up(
                     progress=lambda done, total: prog.update(
                         task, completed=done, total=total or None
                     ),
+                    verify=verify,
                 )
                 target = result.get("path", f"{remote_dir.rstrip('/')}/{local.name}")
                 console.print(f"[green]OK[/green] 已上传到 [bold]{target}[/bold]")
+                if verify:
+                    console.print("[green]OK[/green] MD5 完整性校验通过")
             except ZSpaceError as e:
                 _print_error(e)
                 raise typer.Exit(1)
