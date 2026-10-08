@@ -22,6 +22,9 @@ skills/file-sorter/
 ├── tests/
 │   └── smoke.sh      # 烟雾测试(离线,fixture 端到端 + 合规库零误报)
 └── README.md         # 本文件
+
+# 用户可选自建(仓库里**不**放,见「配置覆盖」):
+└── config.json       # 目录白名单 + 扩展名改判的覆盖层
 ```
 
 ## 命令
@@ -49,7 +52,8 @@ python3 skills/file-sorter/file_sorter.py scan \
 0. root         --root 自己的目录名能映射到类别      → 当作所有文件的隐含祖先
                   (--root /Volumes/nas/图纸 时,里面的 dwg 视为已就位,
                    不会生成 图纸/图纸/ 这种自己套自己的计划)
-1. protected    命中 --keep-dir 白名单            → 跳过,计入 stats.protected
+1. protected    命中白名单(--keep-dir + config.json
+                的 whitelist_dirs,同一个匹配函数) → 跳过,计入 stats.protected
 2. compliant    祖先目录名能映射到本文件的类别      → 跳过,计入 stats.compliant
 3. nested       祖先目录是「别的」类别目录          → 默认跳过(nested_other_cat)
                                                       --strict 才提议搬家
@@ -205,7 +209,8 @@ rm -rf "$W"
     "unknown_exts": {".xyz": 3}, "largest": [...],
     "layout", "naming", "dest", "strict", "split_project_dirs",
     "only_cats", "max_issues",
-    "sampled_out", "elapsed_sec"
+    "sampled_out", "elapsed_sec",
+    "config"?                                      // 仅当同目录 config.json 被加载
   },
   "count": 17,
   "issues": [{
@@ -252,6 +257,82 @@ rm -rf "$W"
 `文档`/`Documents`/`资料`、`图片`/`照片`/`Images`/`img`…,所以已手工分好类的库
 不会被再搬一次。别名表刻意保守 —— 认错目录(把项目目录当类别目录)比不认更糟。
 
+## 配置覆盖(`config.json`,issue #15)
+
+可选的一层覆盖,放在**脚本自己所在目录**。**没有这个文件时输出与引入它之前
+逐字节一致**(见「零破坏性怎么证的」)。完整 schema、模式锚定规则、出错行为在
+`SKILL.md` 的「配置覆盖」一节 —— 那份是给 LLM 读的,这里只记实现决定。
+
+### 为什么代码是复制的,不是共享模块
+
+`zs skill` 的安装方式是**逐目录 `shutil.copytree`**(`cli.py` 的 `skill()`,
+`--only a,b` 也一样),所以任何放在 `skills/<name>/` 外面的共享模块都**不会被装到
+用户机器上**,一 import 就 ImportError。同仓库 PR #41 遇到过同一件事,当时的选择
+就是把工具函数放进 `photo_organizer.py` 而不是新建框架模块 —— 这里沿用那个先例。
+
+代价是这段代码在两个 scanner 里各存一份。为了让它可维护:
+
+- 共享部分被切成 **PART_A(`CONFIG_*` 声明,9 行)+ PART_B(`_cfg_die` /
+  `_cfg_match` / `load_config`,104 行)**,两份**逐字节相同**;唯一 per-skill 的
+  是夹在中间的 `CONFIG_EXT_TABLES`(类别名 → 该 skill 的扩展名集合)。
+- 有一份校验脚本比对这两段(`/tmp/check_block_identity.py`,PR 里贴了输出),
+  漂移立刻可见。改动请全局搜索替换。
+- `_cfg_match()` **不是新写的匹配器**:它就是原来 `Sorter._protected()` 的函数体,
+  抽出来之后 `_protected()` 变成一行调用。所以配置文件里的模式与 `--keep-dir`
+  走的是**同一条**代码路径 —— 不可能出现两套语义,而且既有 `--keep-dir` 测试
+  自动变成对新匹配器的测试。
+
+### 三个关键决定
+
+| 决定 | 取值 | 理由 |
+|------|------|------|
+| 未知键 | **拒绝**(exit 1),不是警告后忽略 | 键名拼错一个字母(`whitelist_dir`)会让整份配置静默失效,而现象是「我明明加进白名单了它还在报」——issue 里点名的最坏失败方式。报错里列出可用键名,照着改就能修 |
+| `whitelist_dirs` 合并 | **追加**到 `--keep-dir` | 替换会静默撤掉内置行为;而且这个键的定位就是「`--keep-dir` 的持久化形式」(CONTRIBUTION_IDEAS 的原话:per-library,所以每次运行都要重打) |
+| `extension_overrides` 合并 | **逐扩展名改判**:先从所有内置表里摘掉,再放进指定那张 | 整表替换会把 255 个内置扩展名一次清零。摘掉再放是必要的:`categorize()` 是有序判定阶梯,`.log` 只加进 `DOC_EXTS` 而不从 `JUNK_EXTS` 摘掉的话,junk 那一级先命中,覆盖看起来完全没生效 |
+
+### 校验先于写入
+
+`load_config()` 把两个键**全部**校验完才开始改内置集合。半途 `SystemExit` 不会
+留下一张只改了一半的表 —— 那比直接报错难查得多。smoke TEST 7 里有一条进程内断言
+专门盯这个:一份「`whitelist_dirs` 合法 + `extension_overrides` 非法」的配置退出后,
+`CONFIG_WHITELIST` / `CONFIG_INFO` / `DOC_EXTS` 必须分毫未动。
+
+### 「配置到底生效没有」必须可查
+
+加载成功时:stderr 打一行 `ℹ️ 已加载覆盖配置 <path>(whitelist_dirs N 条,
+extension_overrides M 条)`,`--json` 里多一个 `stats.config`。两者都**只在真加载了
+配置时出现**,所以「没有 `stats.config` 这个键」就是「没找到配置文件」的确定信号。
+错误只写 stderr,`--json` 的 stdout 保持可解析(smoke 里对 15 种畸形配置逐条断言
+`stdout == ""`)。
+
+### 仓库里刻意不放 `config.json`(连 example 也不放)
+
+`pyproject.toml` 的 `package-data` 是 `"zspace_cli.skills" = ["**/*"]`,而
+`zs skill` 会把整个目录 copytree 给用户 —— 所以**任何**放进 `skills/<name>/` 的
+`config.json` 都会被装到用户机器上并**立刻生效**,等于给所有用户默认开了一份覆盖。
+放一个 `config.example.json` 虽然不生效,但也只是把「哪个文件名才算数」这件事
+变模糊。schema 直接写在 SKILL.md 里,用户自己 `touch` 一个。
+
+### 零破坏性怎么证的
+
+`/tmp/identity.sh`(PR 里贴了输出):同一棵 54 文件 / 22 目录的 fixture,用
+`git archive main` 取出的**改动前**脚本与改动后脚本各跑一遍,`cmp` 四样东西 ——
+`--json` 的 stdout、人类可读报告的 stdout、stderr、`--output` 写出的 JSON 文件。
+`generated_at` / `elapsed_sec` / fixture 绝对路径 / venv 路径先归一化。
+
+file-sorter 覆盖 16 组参数组合(默认 / `--strict` / `--split-project-dirs` /
+`--keep-dir` / 三种 `--layout` × 两种 `--naming` / `--dest` / `--only-cat` /
+`--max-issues` / `--sample`+`--top` / `--max-depth` / `--stale-days` /
+`--root` 指向类别目录 / `--help`),photo-organizer 覆盖 6 组(含 `--exif`),
+另外 7 个未改动的 scanner 也各跑一遍做回归。**两个解释器各跑一遍**(3.9 与 3.12
+都用同一个解释器跑两边,避免把解释器差异误认成改动差异):115 项 `cmp`,0 处不同。
+
+这个 harness 自己也做了负控制(`/tmp/harness_control.sh`):6 处故意破坏
+(无条件写 `stats.config`、无配置时也改内置表、白名单全命中、无配置时也打提示行、
+`--keep-dir` 失效、`_walk` 的 `wl` 默认值翻转)全部被检出,且未破坏的副本报 0 处
+不同(无假阳性)。第一版里有一处破坏被漏掉,查下来是**破坏本身写错了**——插到了
+early return 之后,是不可达代码;修正后 6/6 检出。
+
 ## 设计原则
 
 1. **只读** — 无 apply/mv/rm 子命令;搬家走 Agent + 用户确认
@@ -278,6 +359,24 @@ PY=/usr/bin/python3 bash skills/file-sorter/tests/smoke.sh   # 3.9 兼容验证
 `--dest` 的目标路径、`--max-issues` 截断(stats 仍全量、目录级 issue 不被截断)、
 `--only-cat` 分批。
 
+**TEST 7(config.json 覆盖层)** 把脚本复制进临时目录来模拟「装好之后」的样子
+(因为配置是按 `__file__` 解析的),覆盖:无配置时 `stats` 里没有 `config` 键、
+扩展名改判只动写到的那一个、键归一化(`.XYZ` / `LOG`)、junk 被救回成正常类别、
+`原盘/*` 与裸 `原盘` 与 `深层/原盘/*` 三种锚定的**互相可区分**的结果、与
+`--keep-dir` 的追加合并、`*` 也管不到 root 下的散文件、空对象 `{}`、键缺省、
+**被扫描目录里的 `config.json` 被忽略**(三种 cwd 都试)、15 种畸形配置逐条
+exit=1 + 只写 stderr + 指名键、校验先于写入、`_cfg_match` 的 15 条纯函数断言。
+
+这 15 条断言做过变异测试(`/tmp/mutate.py`,PR 里贴了输出):33 处故意破坏
+(每个校验门、两处归一化、四处合并语义、两处「已加载」信号、五处锚定规则、
+两个 per-skill 接入点)**全部被至少一条断言检出**。过程中查出 3 条自己的假断言:
+① photo-organizer 的畸形配置清单是 file-sorter 的子集,漏了「空字符串」那条,
+所以对应的破坏在那边活了下来;② 「类别值不是字符串」用的 needle 是
+`extension_overrides`,而它下面那个「类别名不认识」的兜底检查也会产生含这个词的
+报错,两者区分不开;③ 大小写不敏感只测了「目录大写 / 模式小写」一个方向 ——
+实现里相对路径总是先 `.lower()`,所以那个方向即使忘了给模式做 `lower` 也照样过。
+三条都已修正(补用例 / 换成只有类型检查才会产生的措辞 / 补反方向断言)。
+
 **未覆盖**:真实 SMB 挂载上的性能、真实 CAD 库的扩展名分布
 (taxonomy 是按公开格式清单写的,没跑过真实图纸库)、Windows 路径语义。
 
@@ -287,8 +386,14 @@ PY=/usr/bin/python3 bash skills/file-sorter/tests/smoke.sh   # 3.9 兼容验证
 - 不建目录、不清空目录(搬完的空壳交给 nas-report / 手工 `rmdir`)
 - 年份取 mtime,拷贝/下载会刷新 → `*-year` 布局可能把老文件归到今年
 - 项目目录判定是启发式(≥3 文件 + ≥2 类),2 个文件的真项目会漏判
-- 类别表是硬编码集合;专业软件私有格式要改脚本(见 SKILL.md 故障排查)
-  —— 与 roadmap #15(per-skill config overrides)是同一个缺口
+- ~~类别表是硬编码集合;专业软件私有格式要改脚本~~ → **已部分解决**(issue #15):
+  同目录 `config.json` 的 `extension_overrides` 可以改判扩展名,`whitelist_dirs`
+  可以持久化 `--keep-dir`。仍然是硬编码的:类别的**目标目录名**
+  (`图纸/` `Documents/`)、目录名别名表 `_DIR_TO_CAT`、项目目录启发式的阈值
+- **`config.json` 是 per-安装、不是 per-库**:一份安装一份配置。多个库想用不同
+  白名单,目前只能继续用 `--keep-dir` 或装两份 skill。加一个可选的 `--config PATH`
+  是自然的后续,但它会引出「两处配置是替换还是叠加」这个新问题,所以没有夹在
+  这个 PR 里做
 - **taxonomy 未在真实图纸库上验证过**:`.prt`/`.asm`/`.obj`/`.ts`/`.m` 这类
   跨领域扩展名的归属是按主流用法猜的,真实反馈前别说"图纸全认得"
 

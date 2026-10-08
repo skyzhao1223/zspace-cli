@@ -563,5 +563,364 @@ finally:
     shutil.rmtree(fix, ignore_errors=True)
 PYEOF
 
+echo "=== TEST 9: config.json 覆盖层(issue #15) ==="
+# config.json 按**脚本自己所在目录**(__file__)解析 —— 不是 cwd,也不是被扫描的
+# root。所以这里把脚本复制进一个临时目录,模拟「zs skill 装好之后」的样子。
+PCFG_SRC="$(mktemp -d /tmp/photoorganizer-cfg.XXXXXX)"
+mkdir -p "$PCFG_SRC/installed" "$PCFG_SRC/lib"
+cp "$SKILL_DIR/photo_organizer.py" "$PCFG_SRC/installed/"
+PO_CFG_SRC="$PCFG_SRC" "$PY" - <<'PYEOF'
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+src = os.environ["PO_CFG_SRC"]
+installed = os.path.join(src, "installed")
+script = os.path.join(installed, "photo_organizer.py")
+cfg = os.path.join(installed, "config.json")
+lib = os.path.join(src, "lib")
+
+# ---- fixture:issue #15 点名的 原盘/VIDEO_TS + 故意的样本文件 + 归类边界 ----
+for d in ("原盘/VIDEO_TS", "深层/原盘/子目录", "新建文件夹", "2024"):
+    os.makedirs(os.path.join(lib, d), exist_ok=True)
+FILES = {
+    "原盘/VIDEO_TS/VTS_01_1.VOB": "vob-1",     # 原盘:非媒体 + 目录名不合规
+    "原盘/VIDEO_TS/VTS_01_2.VOB": "vob-2",
+    "原盘/说明.txt": "txt",                     # 直接在 原盘/ 下(锚定对照)
+    "原盘/封面.jpg": "jpg",
+    "深层/原盘/子目录/a.jpg": "jpg-deep",        # 同名的 原盘,但不在 root 第一层
+    "新建文件夹/b.jpg": "jpg-bad",              # BAD_DIR
+    "2024/IMG_0001.jpg": "jpg-loose",           # 年目录下的散文件
+    "movie.ass": "ass",                         # issue 的例子:内置判「非媒体混入」
+    "movie.srt": "srt",                         # 对照组:只改 .ass 时它不动
+    "IMG_1234.aae": "aae",                      # 内置 sidecar
+    "notes.txt": "txt-root",
+    "IMG_20240503_120000.jpg": "jpg-dated",     # 文件名带日期 → 散文件
+}
+for rel, body in FILES.items():
+    with open(os.path.join(lib, rel), "w", encoding="utf-8") as fh:
+        fh.write(body)
+
+
+def write_cfg(text):
+    with open(cfg, "w", encoding="utf-8") as fh:
+        fh.write(text)
+
+
+def drop_cfg():
+    if os.path.exists(cfg):
+        os.remove(cfg)
+
+
+def run(*extra, expect=0, cwd=None):
+    # cwd 故意设成 src(既不是脚本目录也不是被扫描目录):证明解析与 cwd 无关
+    r = subprocess.run(
+        [sys.executable, script, "scan", "--root", lib, "--json", *extra],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=cwd or src)
+    assert r.returncode == expect, (r.returncode, r.stdout[-500:], r.stderr)
+    return r
+
+
+def scan(*extra, cwd=None):
+    r = run(*extra, cwd=cwd)
+    return json.loads(r.stdout), r.stderr
+
+
+def paths(d):
+    return {i["path"]: i for i in d["issues"]}
+
+
+def kinds(d, needle):
+    return sorted(i["path"] for i in d["issues"]
+                  if any(needle in p for p in i["problems"]))
+
+
+# -- 0. 基线:没有 config.json 时,stats 里连 config 这个键都不该出现 ---------
+drop_cfg()
+base, base_err = scan()
+bp = paths(base)
+s = base["stats"]
+assert "config" not in s, s.get("config")
+assert "已加载覆盖配置" not in base_err, base_err
+assert s["dirs"] == 7 and s["files"] == 12, (s["dirs"], s["files"])
+assert s["photos"] == 5 and s["videos"] == 0, s
+assert s["non_media"] == 6 and s["junk"] == 0, s
+assert s["loose"] == 2 and s["camera_no_date"] == 1, s
+assert base["count"] == 12, base["count"]
+# 目录名问题:原盘/ 深层/ 新建文件夹/(VIDEO_TS 在 depth2、2024 是年份 → 都合规)
+assert sorted(i["path"] for i in base["issues"] if i["is_dir"]) == \
+    ["原盘", "新建文件夹", "深层"], sorted(
+        i["path"] for i in base["issues"] if i["is_dir"])
+# 文件问题:非媒体 6 + sidecar 1 + 散文件 2
+assert kinds(base, "非媒体文件混入") == sorted([
+    "notes.txt", "movie.ass", "movie.srt",
+    "原盘/VIDEO_TS/VTS_01_1.VOB", "原盘/VIDEO_TS/VTS_01_2.VOB", "原盘/说明.txt",
+]), kinds(base, "非媒体文件混入")
+assert kinds(base, "sidecar") == ["IMG_1234.aae"], kinds(base, "sidecar")
+assert kinds(base, "散文件") == ["2024/IMG_0001.jpg", "IMG_20240503_120000.jpg"]
+# 合规的照片不出 issue
+for quiet in ("原盘/封面.jpg", "深层/原盘/子目录/a.jpg", "新建文件夹/b.jpg"):
+    assert quiet not in bp, quiet
+print("  ✓ 无 config.json:stats 无 config 键、stderr 无提示、12 条问题与旧版一致")
+
+# -- 1. issue #15 的原话:把 .ass 当 sidecar --------------------------------
+write_cfg(json.dumps({"extension_overrides": {"ass": "sidecar"}}))
+d, err = scan()
+dp = paths(d)
+assert kinds(d, "sidecar") == ["IMG_1234.aae", "movie.ass"], kinds(d, "sidecar")
+assert "movie.ass" not in kinds(d, "非媒体文件混入"), kinds(d, "非媒体文件混入")
+assert d["stats"]["non_media"] == 5, d["stats"]["non_media"]
+# 逐扩展名改判:.srt 没写就必须还是「非媒体混入」;内置 .aae 也没被挤掉
+assert "movie.srt" in kinds(d, "非媒体文件混入")
+assert "IMG_1234.aae" in dp
+assert "已加载覆盖配置" in err, err
+assert d["stats"]["config"]["extension_overrides"] == {"ass": "sidecar"}
+assert d["stats"]["config"]["whitelist_dirs"] == []
+print("  ✓ extension_overrides 把 .ass 判成 sidecar(issue 原例),且只动这一个")
+
+# -- 2. 键归一化 + 把原盘的 .VOB 认成视频 ----------------------------------
+write_cfg(json.dumps({"extension_overrides": {".VOB": "video"}}))
+d, _ = scan()
+assert d["stats"]["videos"] == 2, d["stats"]["videos"]
+assert d["stats"]["non_media"] == 4, d["stats"]["non_media"]
+assert "原盘/VIDEO_TS/VTS_01_1.VOB" not in kinds(d, "非媒体文件混入")
+print("  ✓ 键归一化(.VOB → vob);原盘里的 VOB 改判为视频,不再算「非媒体混入」")
+
+# -- 3. 内置 sidecar 也能被改判(证明「先从别的表里摘掉」那一步真的做了)---
+write_cfg(json.dumps({"extension_overrides": {"aae": "photo"}}))
+d, _ = scan()
+assert kinds(d, "sidecar") == [], kinds(d, "sidecar")
+assert d["stats"]["photos"] == 6, d["stats"]["photos"]      # 5 + IMG_1234.aae
+# 它现在是 root 下的散照片 → 换成一条「散文件」issue,而不是安静地消失
+assert kinds(d, "散文件") == ["2024/IMG_0001.jpg", "IMG_1234.aae",
+                             "IMG_20240503_120000.jpg"], kinds(d, "散文件")
+assert d["stats"]["loose"] == 3, d["stats"]["loose"]
+print("  ✓ aae 从内置 sidecar 摘出来改判为 photo(不摘就会同时命中两张表)")
+
+# -- 4. 兜底类别 non_media(表值是 None):写了等于显式维持原判 ------------
+write_cfg(json.dumps({"extension_overrides": {"txt": "non_media"}}))
+d, err = scan()
+assert sorted(kinds(d, "非媒体文件混入")) == sorted(kinds(base, "非媒体文件混入"))
+assert d["stats"]["non_media"] == 6, d["stats"]["non_media"]
+assert "已加载覆盖配置" in err
+print("  ✓ 兜底类别 non_media 可写:显式维持原判,不是静默无效")
+
+# -- 5. whitelist_dirs:整棵子树跳过(目录名不判、文件不产 issue)----------
+write_cfg(json.dumps({"whitelist_dirs": ["原盘"]}))
+d, _ = scan()
+dp = paths(d)
+assert not [p for p in dp if p.startswith("原盘")], sorted(dp)
+assert not [i for i in d["issues"] if i["is_dir"] and i["path"] == "原盘"]
+assert d["stats"]["config"]["skipped_files"] == 5, d["stats"]["config"]
+assert d["stats"]["non_media"] == 3, d["stats"]["non_media"]   # 6 - 3(原盘内)
+# 裸名字在任意深度都命中:深层/原盘/子目录/a.jpg 也被跳过
+assert "深层/原盘/子目录/a.jpg" not in dp
+# 没写到的目录一条不少
+assert d["stats"]["dirs"] == 7, d["stats"]["dirs"]      # 目录本身仍计入
+assert d["stats"]["files"] == 7, d["stats"]["files"]     # 12 - 5
+assert "新建文件夹" in [i["path"] for i in d["issues"] if i["is_dir"]]
+print("  ✓ whitelist_dirs=[原盘]:整棵子树跳过(5 个文件),其余目录一条不少")
+
+# -- 6. 锚定:原盘/* 命中 原盘/VIDEO_TS,但不命中 原盘 自己这一层 ----------
+write_cfg(json.dumps({"whitelist_dirs": ["原盘/*"]}))
+d, _ = scan()
+dp = paths(d)
+assert "原盘/VIDEO_TS/VTS_01_1.VOB" not in dp, sorted(dp)
+assert "原盘/VIDEO_TS/VTS_01_2.VOB" not in dp, sorted(dp)
+assert d["stats"]["config"]["skipped_files"] == 2, d["stats"]["config"]
+# 原盘/ 这一层没被 原盘/* 命中 → 目录名问题照报,直接躺在 原盘/ 下的文件照报
+assert "原盘" in [i["path"] for i in d["issues"] if i["is_dir"]], d["issues"]
+assert "原盘/说明.txt" in dp, sorted(dp)
+assert "原盘/封面.jpg" not in dp                 # 它本来就合规,不是因为白名单
+assert d["stats"]["non_media"] == 4, d["stats"]["non_media"]   # 6 - 2 个 VOB
+# 「深层/原盘/子目录」不命中 原盘/*(相对路径不是以 原盘/ 开头)→ 没被跳过。
+# 它本身合规、不产 issue,所以用计数来钉:跳过数仍是 2,files 仍是 10。
+assert d["stats"]["files"] == 10, d["stats"]["files"]
+print("  ✓ 原盘/* 命中 原盘/VIDEO_TS(跳过 2 个),但不命中 原盘 自身那一层")
+
+# -- 7. 带 / 的模式锚定在 root:深层/原盘/* 只命中那一条 ------------------
+write_cfg(json.dumps({"whitelist_dirs": ["深层/原盘/*"]}))
+d, _ = scan()
+assert d["stats"]["config"]["skipped_files"] == 1, d["stats"]["config"]
+assert d["stats"]["files"] == 11, d["stats"]["files"]    # 12 - 1
+assert "原盘/VIDEO_TS/VTS_01_1.VOB" in paths(d), sorted(paths(d))
+assert "原盘" in [i["path"] for i in d["issues"] if i["is_dir"]]
+print("  ✓ 深层/原盘/* 只命中 root 下那一条,不波及同名的 原盘/")
+
+# -- 8. "*" 也管不到直接躺在 root 下的文件(白名单只作用于目录)-----------
+write_cfg(json.dumps({"whitelist_dirs": ["*"]}))
+d, _ = scan()
+assert d["stats"]["config"]["skipped_files"] == 7, d["stats"]["config"]
+assert not [i for i in d["issues"] if i["is_dir"]], d["issues"]
+dp = paths(d)
+for root_file in ("movie.ass", "movie.srt", "IMG_1234.aae", "notes.txt",
+                  "IMG_20240503_120000.jpg"):
+    assert root_file in dp, root_file
+assert d["stats"]["files"] == 5, d["stats"]["files"]     # 只剩 root 下那 5 个
+print("  ✓ 白名单只作用于目录:* 也管不到直接躺在 root 下的 5 个文件")
+
+# -- 9. 空对象 {}:加载并提示,但行为与无配置逐条相同 ----------------------
+def shape(x):
+    return sorted((i["path"], tuple(i["problems"])) for i in x["issues"])
+
+
+write_cfg("{}")
+d, err = scan()
+assert shape(d) == shape(base), "空对象改变了判定"
+assert d["stats"]["non_media"] == base["stats"]["non_media"]
+assert "config" in d["stats"]
+assert d["stats"]["config"]["whitelist_dirs"] == []
+assert d["stats"]["config"]["extension_overrides"] == {}
+assert d["stats"]["config"]["skipped_files"] == 0
+assert "已加载覆盖配置" in err, err
+print("  ✓ 空对象 {} 加载成功:问题清单与无配置时逐条相同,但会明确提示已加载")
+
+# -- 10. 配置文件在,但某个键不在 → 那个键不产生任何影响 ------------------
+write_cfg(json.dumps({"whitelist_dirs": ["原盘"]}))
+d, _ = scan()
+assert d["stats"]["config"]["extension_overrides"] == {}
+assert "movie.ass" in kinds(d, "非媒体文件混入")     # 没写 extension_overrides
+print("  ✓ 只有 whitelist_dirs 时,扩展名判定一条都不变")
+
+# -- 11. 被扫描目录里的 config.json 必须被**忽略**(证明按 __file__ 解析)---
+drop_cfg()
+root_cfg = os.path.join(lib, "config.json")
+with open(root_cfg, "w", encoding="utf-8") as fh:
+    json.dump({"extension_overrides": {"ass": "sidecar"},
+               "whitelist_dirs": ["*"]}, fh)
+for cwd in (src, lib, installed):        # 三种 cwd 都不能让它被读到
+    d, err = scan(cwd=cwd)
+    assert "movie.ass" in kinds(d, "非媒体文件混入"), (cwd, kinds(d, "非媒体"))
+    assert "config" not in d["stats"], (cwd, d["stats"].get("config"))
+    assert "已加载覆盖配置" not in err, (cwd, err)
+    assert d["stats"]["files"] == 13, (cwd, d["stats"]["files"])  # 它自己被扫到了
+os.remove(root_cfg)
+print("  ✓ 被扫描目录里的 config.json 被忽略(3 种 cwd 都试过),只当普通文件扫")
+
+# -- 12. 畸形配置:一律 exit=1,指名文件与键,且不污染 --json stdout --------
+BAD = [
+    ("非法 JSON", "{not json", "不是合法 JSON"),
+    ("空文件", "", "不是合法 JSON"),
+    ("顶层不是对象", '"just a string"', "顶层"),
+    ("未知键(少写一个 s)", '{"whitelist_dir": ["原盘"]}', "whitelist_dir"),
+    ("whitelist_dirs 不是数组", '{"whitelist_dirs": "原盘"}', "whitelist_dirs"),
+    ("whitelist_dirs 元素不是字符串", '{"whitelist_dirs": [null]}',
+     "whitelist_dirs[0]"),
+    ("whitelist_dirs 空字符串", '{"whitelist_dirs": ["  "]}', "whitelist_dirs[0]"),
+    ("whitelist_dirs 绝对路径", '{"whitelist_dirs": ["/原盘"]}', "绝对路径"),
+    ("whitelist_dirs Windows 盘符", '{"whitelist_dirs": ["Z:\\\\data"]}',
+     "绝对路径"),
+    ("extension_overrides 不是对象", '{"extension_overrides": []}',
+     "extension_overrides"),
+    ("类别值不是字符串", '{"extension_overrides": {"ass": true}}',
+     "必须是字符串类别名"),
+    ("扩展名含多个点", '{"extension_overrides": {"tar.gz": "photo"}}', "tar.gz"),
+    ("扩展名归一化后为空", '{"extension_overrides": {".": "photo"}}', "空的"),
+    ("类别名不存在", '{"extension_overrides": {"ass": "subtitle"}}', "subtitle"),
+    ("两个键都拼错", '{"whitelist_dir": [], "extension_override": {}}',
+     "extension_override"),
+]
+# photo-organizer 的类别表与 file-sorter **不同**:同一份配置在那边合法、在这边
+# 必须报错 —— 这条钉住「CONFIG_EXT_TABLES 是 per-skill 的」,不是全局一张表。
+for label, text, needle in BAD + [
+    ("file-sorter 的类别名在本 skill 不存在", '{"extension_overrides": {"ass": "doc"}}',
+     "doc"),
+    ("另一个 skill 的类别名", '{"extension_overrides": {"ass": "cad"}}', "cad"),
+]:
+    write_cfg(text)
+    r = run(expect=1)
+    assert r.stdout == "", (label, "错误不能污染 --json 的 stdout", r.stdout[:200])
+    assert "config.json" in r.stderr, (label, r.stderr)
+    assert needle in r.stderr, (label, needle, r.stderr)
+    assert "❌" in r.stderr, (label, r.stderr)
+# 报错里要列出**本 skill** 的可用类别,照着改就能修
+write_cfg('{"extension_overrides": {"ass": "doc"}}')
+r = run(expect=1)
+for cat in ("photo", "video", "sidecar", "junk", "non_media"):
+    assert cat in r.stderr, (cat, r.stderr)
+drop_cfg()
+print(f"  ✓ {len(BAD) + 2} 种畸形配置全部 exit=1、只写 stderr、指名键,"
+      "并列出本 skill 的可用类别")
+
+# -- 13. 校验先于写入 + 锚定规则的纯函数证据 ------------------------------
+sys.path.insert(0, installed)
+import contextlib                                           # noqa: E402
+import io                                                   # noqa: E402
+import photo_organizer as po                                # noqa: E402
+
+bad_dir = Path(src) / "bad"
+bad_dir.mkdir(exist_ok=True)
+(bad_dir / "config.json").write_text(json.dumps({
+    "whitelist_dirs": ["原盘"],
+    "extension_overrides": {"ass": "doc"},      # file-sorter 的类别,这里不存在
+}), encoding="utf-8")
+before = (set(po.SIDECAR_EXTS), set(po.PHOTO_EXTS), set(po.VIDEO_EXTS))
+err = io.StringIO()
+try:
+    with contextlib.redirect_stderr(err):
+        po.load_config(bad_dir)
+    raise AssertionError("坏配置本该 SystemExit")
+except SystemExit as e:
+    assert "doc" in str(e) and "config.json" in str(e), str(e)
+assert err.getvalue() == "", err.getvalue()     # 失败路径不该先打印「已加载」
+assert po.CONFIG_WHITELIST == [], po.CONFIG_WHITELIST
+assert po.CONFIG_INFO == {}, po.CONFIG_INFO
+assert (set(po.SIDECAR_EXTS), set(po.PHOTO_EXTS), set(po.VIDEO_EXTS)) == before
+
+m = po._cfg_match
+assert m(["原盘", "VIDEO_TS"], ["原盘/*"])              # 整段相对路径命中
+assert m(["原盘", "VIDEO_TS"], ["原盘"])                # 任一级目录名命中
+assert not m(["原盘"], ["原盘/*"])                      # 原盘/* 不命中 原盘 自身
+assert not m(["深层", "原盘", "子目录"], ["原盘/*"])     # 不在 root 第一层就不算
+assert m(["深层", "原盘", "子目录"], ["深层/原盘/*"])
+assert m(["深层", "原盘", "子目录"], ["原盘"])           # 裸名字命中任意深度
+assert m(["影视", "Season 1"], ["影视/*"])              # 含空格的中文路径
+assert m(["SCREENSHOTS"], ["screenshots"])              # 大小写不敏感(目录大写)
+assert m(["screenshots"], ["SCREENSHOTS"])              # 反方向:模式大写
+assert m(["原盘", "video_ts"], ["原盘/VIDEO_TS"])        # 整段路径也要双向不敏感
+assert m(["Samples", "Sub"], ["SAMPLES/*"])             # 带通配时同样双向
+assert m(["原盘"], ["*"])                               # * 跨 / 匹配
+assert not m([], ["*"])                                 # root 下的散文件不吃白名单
+assert not m(["原盘"], [])                              # 没有模式 = 不命中
+print("  ✓ 校验先于写入(内置三张表分毫未动)+ _cfg_match 锚定规则 14 条断言")
+
+# -- 14. 与内置 WHITELIST_DIRS 的关系:是追加,不是替换 --------------------
+# 内置的 截图/ 一直合规;加了 config 之后它必须**仍然**合规。
+os.makedirs(os.path.join(lib, "截图"), exist_ok=True)
+with open(os.path.join(lib, "截图", "S.png"), "w", encoding="utf-8") as fh:
+    fh.write("png")
+drop_cfg()
+d0, _ = scan()
+assert "截图" not in [i["path"] for i in d0["issues"] if i["is_dir"]], d0["issues"]
+write_cfg(json.dumps({"whitelist_dirs": ["原盘"]}))
+d1, _ = scan()
+assert "截图" not in [i["path"] for i in d1["issues"] if i["is_dir"]], d1["issues"]
+assert "原盘" not in [i["path"] for i in d1["issues"] if i["is_dir"]], d1["issues"]
+assert "新建文件夹" in [i["path"] for i in d1["issues"] if i["is_dir"]]
+print("  ✓ whitelist_dirs 是追加:内置的 截图/ 加了 config 之后仍然合规")
+
+# -- 15. 大小写不敏感必须**双向**成立(端到端)-----------------------------
+# 只测「目录大写 / 模式小写」测不出来:实现里相对路径总是先 .lower(),那个方向
+# 即使忘了给模式做 lower 也照样过。所以两个方向都要跑一遍。
+os.makedirs(os.path.join(lib, "samples"), exist_ok=True)
+with open(os.path.join(lib, "samples", "S.mkv"), "w", encoding="utf-8") as fh:
+    fh.write("mkv")
+for pat in ("SAMPLES", "samples", "Samples"):
+    write_cfg(json.dumps({"whitelist_dirs": [pat]}))
+    d, _ = scan()
+    dirs_flagged = [i["path"] for i in d["issues"] if i["is_dir"]]
+    assert "samples" not in dirs_flagged, (pat, dirs_flagged)
+    assert d["stats"]["config"]["skipped_files"] == 1, (pat, d["stats"]["config"])
+print("  ✓ 大小写不敏感双向成立:SAMPLES / samples / Samples 都命中小写目录")
+os.remove(os.path.join(lib, "截图", "S.png"))
+os.rmdir(os.path.join(lib, "截图"))
+os.remove(os.path.join(lib, "samples", "S.mkv"))
+os.rmdir(os.path.join(lib, "samples"))
+PYEOF
+rm -rf "$PCFG_SRC"
+
 echo ""
 echo "🎉 所有 smoke test 通过"
