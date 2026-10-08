@@ -131,4 +131,46 @@ echo "=== TEST 5: --help ==="
 echo "  ✓ CLI help 可用"
 
 echo ""
+echo "=== TEST 6: nas-report diff（两份合成快照，离线） ==="
+NR_SKILL_DIR="$SKILL_DIR" "$PY" - <<'PYEOF'
+import json
+import os
+import subprocess
+import sys
+
+skill = os.environ["NR_SKILL_DIR"]
+fx = os.path.join(skill, "tests", "fixtures")
+# 显式 encoding：Windows 上默认是 GBK，读子进程输出会炸（Linux CI 上看不出来）
+r = subprocess.run([sys.executable, os.path.join(skill, "nas_report.py"), "diff",
+                    os.path.join(fx, "diff-old.json"), os.path.join(fx, "diff-new.json"),
+                    "--json"], capture_output=True, text=True,
+                   encoding="utf-8", errors="replace")
+if r.returncode != 0:
+    print("❌ diff 退出码 %s: %s" % (r.returncode, (r.stderr or "")[:200])); sys.exit(1)
+d = json.loads(r.stdout)
+checks = [
+    ("bytes_added", d["totals"]["bytes_added"], 500000000),
+    ("files_added", d["totals"]["files_added"], 20),
+    ("growth/day", d["growth_bytes_per_day"], 50000000),
+    ("video gb_added", d["by_category"]["video"]["gb_added"], 0.4),
+    ("new_large_files", [f["path"] for f in d["new_large_files"]], ["/data/media/c.mkv"]),
+]
+bad = [(n, got, want) for n, got, want in checks if got != want]
+if bad:
+    print("❌ 差分数字不对: %s" % bad); sys.exit(1)
+if d["time_reversed"]:
+    print("❌ 时间被读反了"); sys.exit(1)
+print("  ✓ diff 五个关键数字全对（+500MB / +20 文件 / 50MB每天 / 影视 +0.4GB / 新大文件 1 个）")
+
+# 负控制：两份快照顺序换过来，必须标 time_reversed，且**不许**给出负数速率
+r2 = subprocess.run([sys.executable, os.path.join(skill, "nas_report.py"), "diff",
+                     os.path.join(fx, "diff-new.json"), os.path.join(fx, "diff-old.json"),
+                     "--json"], capture_output=True, text=True,
+                    encoding="utf-8", errors="replace")
+d2 = json.loads(r2.stdout)
+if not d2["time_reversed"] or d2["growth_bytes_per_day"] is not None:
+    print("❌ 顺序反了却没标 time_reversed（或还是给了速率）"); sys.exit(1)
+print("  ✓ 负控制：顺序反了会被标出来，不产生负数速率")
+PYEOF
+
 echo "🎉 所有 smoke test 通过"

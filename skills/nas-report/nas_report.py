@@ -358,6 +358,162 @@ def _print_human(result: dict, top: int) -> None:
     print("=" * 70)
 
 
+def _parse_ts(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+def diff_reports(old: dict, new: dict, capacity_gb: float | None = None) -> dict:
+    """两份 nas-report 快照的差分(纯函数,无 IO,便于单测)。
+
+    边界要说在前面,因为它决定这份差分**能**回答什么:
+
+    * 快照只保留 `--top N` 的 `largest_files` / `largest_dirs`,所以文件级
+      的增减**不是全库 diff**,只是"两份榜单里出现的/消失的"。摘要里带
+      `file_lists_truncated` 标明这一点,不要让读者以为它是全量。
+    * 快照里**没有容量字段**(没有 pool / free / capacity),所以"离满盘还有多久"
+      只能算**增长速率**(字节/天),要 ETA 必须由调用方给 `--capacity-gb`;
+      不给就只报速率,并明写缺什么。
+    * 两份快照的顺序反了会得到负增长——那不是一个"负增长的世界",是**输入顺序错了**,
+      所以单列 `time_reversed` 而不是把负数混进速率里。
+    """
+    so = old.get("stats") or {}
+    sn = new.get("stats") or {}
+
+    def _delta(a: dict, b: dict) -> dict:
+        out = {}
+        for key in sorted(set(a) | set(b)):
+            ea, eb = a.get(key) or {}, b.get(key) or {}
+            before, after = ea.get("size") or 0, eb.get("size") or 0
+            cbefore, cafter = ea.get("count") or 0, eb.get("count") or 0
+            if after == before and cafter == cbefore:
+                continue
+            out[key] = {
+                "bytes_before": before, "bytes_after": after,
+                "bytes_added": after - before,
+                "gb_added": round((after - before) / 1e9, 3),
+                "count_before": cbefore, "count_after": cafter,
+                "count_added": cafter - cbefore,
+            }
+        return dict(sorted(out.items(), key=lambda kv: -abs(kv[1]["bytes_added"])))
+
+    t_old, t_new = _parse_ts(old.get("generated_at")), _parse_ts(new.get("generated_at"))
+    days = (t_new - t_old).total_seconds() / 86400 if (t_old and t_new) else None
+    time_reversed = bool(days is not None and days < 0)
+    d_bytes = (sn.get("total_size_bytes") or 0) - (so.get("total_size_bytes") or 0)
+    d_files = (sn.get("total_files") or 0) - (so.get("total_files") or 0)
+    d_dirs = (sn.get("total_dirs") or 0) - (so.get("total_dirs") or 0)
+    per_day = (d_bytes / days) if (days and days > 0) else None
+
+    def _files(which: str) -> list[dict]:
+        a = {f.get("path"): f for f in (so.get("largest_files") or []) if f.get("path")}
+        b = {f.get("path"): f for f in (sn.get("largest_files") or []) if f.get("path")}
+        keys = [k for k in (b if which == "added" else a)
+                if k not in (a if which == "added" else b)]
+        rows = [(b if which == "added" else a)[k] for k in keys]
+        rows.sort(key=lambda r: -(r.get("size") or 0))
+        return [{"path": r.get("path"), "size": r.get("size"),
+                 "gb": round((r.get("size") or 0) / 1e9, 3),
+                 "category": r.get("category")} for r in rows]
+
+    eta_days = None
+    if capacity_gb and per_day and per_day > 0 and not time_reversed:
+        remain = capacity_gb * 1e9 - (sn.get("total_size_bytes") or 0)
+        if remain > 0:
+            eta_days = round(remain / per_day, 1)
+
+    return {
+        "skill": "nas-report.diff",
+        "capacity_gb": capacity_gb,
+        "eta_days": eta_days,
+        "old": {"generated_at": old.get("generated_at"), "root": old.get("root")},
+        "new": {"generated_at": new.get("generated_at"), "root": new.get("root")},
+        "same_root": old.get("root") == new.get("root"),
+        "interval_days": round(days, 4) if days is not None else None,
+        "time_reversed": time_reversed,
+        "totals": {
+            "bytes_before": so.get("total_size_bytes") or 0,
+            "bytes_after": sn.get("total_size_bytes") or 0,
+            "bytes_added": d_bytes, "gb_added": round(d_bytes / 1e9, 3),
+            "files_before": so.get("total_files") or 0,
+            "files_after": sn.get("total_files") or 0, "files_added": d_files,
+            "dirs_added": d_dirs,
+        },
+        "growth_bytes_per_day": round(per_day) if per_day is not None else None,
+        "by_category": _delta(so.get("by_category") or {}, sn.get("by_category") or {}),
+        "by_growth": _delta(so.get("by_growth") or {}, sn.get("by_growth") or {}),
+        "toplevel": _delta(so.get("toplevel") or {}, sn.get("toplevel") or {}),
+        "new_large_files": _files("added"),
+        "gone_large_files": _files("removed"),
+        "file_lists_truncated": True,      # 快照只留 top-N,这不是全库文件级 diff
+        "capacity_note": "快照里没有容量/可用空间字段；给 --capacity-gb 才能算 ETA",
+        "warnings": [w for w in (
+            ("两份快照的 root 不同,差分仍然成立但读者要知道"
+             if old.get("root") != new.get("root") else None),
+            ("新的这份 generated_at 早于旧的——顺序反了,"
+             "速率与增量都不解读" if time_reversed else None),
+            "old 侧 truncated=True：那份画像本来就不完整" if so.get("truncated") else None,
+            "new 侧 truncated=True：那份画像本来就不完整" if sn.get("truncated") else None,
+        ) if w],
+    }
+
+
+def _print_diff_human(d: dict, top: int, capacity_gb: float | None) -> None:
+    t = d["totals"]
+    print("=" * 70)
+    print("nas-report diff — 两份快照之间发生了什么")
+    print("=" * 70)
+    print(f"旧: {d['old']['generated_at']}  {d['old']['root']}")
+    print(f"新: {d['new']['generated_at']}  {d['new']['root']}")
+    if d["interval_days"] is not None:
+        print(f"间隔: {d['interval_days']:.2f} 天")
+    for w in d["warnings"]:
+        print(f"⚠ {w}")
+    print(f"\n总览: {t['files_before']} → {t['files_after']} 文件 "
+          f"({t['files_added']:+d}) | {_human(t['bytes_before'])} → {_human(t['bytes_after'])} "
+          f"({t['gb_added']:+.3f} GB)")
+    if d["growth_bytes_per_day"] is not None:
+        print(f"增长: {_human(d['growth_bytes_per_day'])}/天")
+        if capacity_gb:
+            remain = capacity_gb * 1e9 - t["bytes_after"]
+            rate = d["growth_bytes_per_day"]
+            if d.get("eta_days") is not None:
+                print(f"距满盘: 还剩 {_human(remain)}（按当前速率 ≈ {d['eta_days']:.0f} 天）")
+            elif rate <= 0:
+                print("距满盘: 本次是净减少,没有 ETA")
+            else:
+                print("距满盘: 已经超过给出的容量")
+    else:
+        print("增长: 算不出（缺 generated_at 或时间反了）")
+    print(f"（{d['capacity_note']}）")
+
+    if d["by_category"]:
+        print("\n【按类别】")
+        for cat, e in list(d["by_category"].items())[:top]:
+            print(f"  {CAT_ZH.get(cat, cat):<8} {e['count_added']:+7d} 个  "
+                  f"{e['gb_added']:+8.3f} GB   "
+                  f"({_human(e['bytes_before'])} → {_human(e['bytes_after'])})")
+    else:
+        print("\n【按类别】无变化")
+    if d["toplevel"]:
+        print("\n【按顶层目录】")
+        for name, e in list(d["toplevel"].items())[:top]:
+            print(f"  {name:<20} {e['count_added']:+7d} 个  {e['gb_added']:+8.3f} GB")
+    if d["new_large_files"]:
+        print(f"\n【新出现的大文件】Top {top}（只在两份榜单内比较,不是全库 diff）")
+        for f in d["new_large_files"][:top]:
+            print(f"  {_human(f.get('size') or 0):>9}  {f['path']}")
+    if d["gone_large_files"]:
+        print(f"\n【从榜单消失的大文件】Top {top}")
+        for f in d["gone_large_files"][:top]:
+            print(f"  {_human(f.get('size') or 0):>9}  {f['path']}")
+    print("=" * 70)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="nas-report: NAS 存储画像 + skill 路由(只读,各品牌 NAS 通用)")
@@ -375,7 +531,31 @@ def main() -> None:
     rep_p.add_argument("--top", type=int, default=10,
                        help="各榜单显示条数(默认 10)")
 
+    dif_p = sub.add_parser("diff", help="两份快照的差分(离线,不碰 NAS)")
+    dif_p.add_argument("old", help="旧快照 JSON")
+    dif_p.add_argument("new", help="新快照 JSON")
+    dif_p.add_argument("--json", action="store_true", help="stdout 输出 JSON")
+    dif_p.add_argument("--top", type=int, default=10, help="每个榜单显示条数(默认 10)")
+    dif_p.add_argument("--capacity-gb", type=float, default=None,
+                       help="池容量(GB)；给了才算'离满盘还有多久'")
+
     args = parser.parse_args()
+
+    if args.cmd == "diff":
+        try:
+            old = json.loads(Path(args.old).read_text(encoding="utf-8"))
+            new = json.loads(Path(args.new).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(f"❌ 读不了快照: {exc}", file=sys.stderr)
+            raise SystemExit(2) from exc
+        d = diff_reports(old, new, args.capacity_gb)
+        if args.json:
+            json.dump(d, sys.stdout, ensure_ascii=False, indent=2)
+            print()
+        else:
+            _print_diff_human(d, args.top, args.capacity_gb)
+        raise SystemExit(0)
+
     if args.cmd != "report":
         print(f"未知命令: {args.cmd}", file=sys.stderr)
         raise SystemExit(1)

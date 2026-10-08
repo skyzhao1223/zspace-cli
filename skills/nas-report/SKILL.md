@@ -45,11 +45,15 @@ python3 nas_report.py report --root /Volumes/nas/data --max-files 5000
 |------|------|
 | `report --root PATH` | 生成存储画像 + 路由建议(只读) |
 | `report --root PATH --json --output F` | JSON 输出 |
+| `diff OLD.json NEW.json [--json]` | **两份快照的差分**(离线,不碰 NAS):按类别/顶层目录的增减、新出现与消失的大文件、增长速率与 ETA |
 | `--max-depth N` / `--max-files N` / `--top N` | 深度 / 文件数上限 / 各榜单条数 |
 
 ```bash
 # 全盘画像(大库先 --max-files 摸底,看耗时再决定要不要全量)
 python3 nas_report.py report --root /Volumes/nas/data --output /tmp/report.json
+
+# 攒了两份画像之后:看这段时间到底长在哪、长了多少、离满盘还有多久
+python3 nas_report.py diff /tmp/report-0901.json /tmp/report-0911.json --capacity-gb 4000
 ```
 
 ## 画像维度
@@ -134,7 +138,7 @@ python3 nas_report.py report --root /Volumes/nas/data --output /tmp/report.json
 - 不算重复占用(那是 dedup-finder 的活);画像里的体积含重复
 - 冷热分层靠 mtime,不读 atime(多数 NAS 挂 noatime,atime 不可靠)
 - 路由阈值写死,不按库总量自适应(小库可能一个建议都不触发)
-- 不做增长趋势(需多次快照对比),单次 report 是当前切片
+- 增长趋势要看**两份**快照:单次 report 只是当前切片,`diff OLD NEW` 才给差分与速率(快照留的是 top-N 榜单,文件级增减不是全库 diff;容量要 `--capacity-gb` 喂进去,快照里没有容量字段)
 - 类别靠扩展名,不改名的错扩展名会误分类
 
 ## 故障排查
