@@ -273,7 +273,8 @@ class Sorter:
             "nested_other_cat": 0, "project_dirs": 0, "project_files": 0,
             "to_move": 0, "to_delete": 0, "to_review": 0,
             "move_bytes": 0, "junk_bytes": 0, "kept_bytes": 0,
-            "dup_suspects": 0, "conflicts": 0, "stale_files": 0,
+            "dup_suspects": 0, "dup_suspect_bytes": 0,
+            "conflicts": 0, "stale_files": 0,
             "filtered_out": 0, "omitted_issues": 0, "issues_truncated": False,
             "target_dirs": {}, "unknown_exts": {}, "largest": [],
             "layout": layout, "naming": naming, "dest": dest,
@@ -542,9 +543,11 @@ class Sorter:
                                  if p != f.rel and not mk]
                         ref = plain[0] if plain else others[0]
                         s["dup_suspects"] += 1
+                        s["dup_suspect_bytes"] += f.size
                         problems.append(
                             f"疑似副本(名字带副本/(1) 标记,且与 {ref} 同大小)"
-                            "— 内容是否真重复请跑 dedup-finder 确认后再搬")
+                            "— 是否真重复要 dedup-finder 做内容级确认;先删重复能省掉"
+                            "搬这些字节,但先分类也不会漏检(dedup 与目录结构无关)")
                 if action == "move":
                     s["to_move"] += 1
                     s["move_bytes"] += f.size
@@ -673,6 +676,14 @@ def _print_human(result: dict, top: int) -> None:
     print(f"散在根目录 {s['root_files']} | 疑似项目目录 {s['project_dirs']} "
           f"| 疑似副本 {s['dup_suspects']} | 重名冲突 {s['conflicts']} "
           f"| 久未动 {s['stale_files']}")
+    if s["dup_suspects"]:
+        # 顺序建议给数据,不给绝对规则:去重与分类谁先都不影响正确性
+        # (dedup-finder 是内容级的、与目录结构无关),差的只是白搬多少字节。
+        share = (s["dup_suspect_bytes"] * 100 // s["move_bytes"]) \
+            if s["move_bytes"] else 0
+        print(f"└ 疑似副本共 {_human(s['dup_suspect_bytes'])}"
+              f"(占待搬体积 {share}%)— 先跑 dedup-finder 删掉就能少搬这么多;"
+              "顺序不影响能否检出,只影响白搬多少")
     if s.get("only_cats"):
         print(f"本轮只处理类别: {', '.join(s['only_cats'])}"
               f"(其余 {s['filtered_out']} 个文件计入统计但不出计划)")
