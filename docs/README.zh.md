@@ -128,9 +128,11 @@ zs skill ~/your-project/skills/ --only nas-report,photo-organizer   # 或按需�
 | 删除 | `zs rm <path>` | `client.remove(path)` | `zspace_remove` |
 | 搜索 | `zs find <keyword>` | `client.search(kw)` | `zspace_search` |
 | 树形浏览 | `zs tree [path]` | `client.tree(path)` | `zspace_tree` |
-| 上传 | `zs up <local> <dir>` | `client.upload(local, dir)` | `zspace_upload` |
+| 上传 | `zs up <local> <dir>` | `client.upload(local, dir, verify=False)` | `zspace_upload` |
 | 下载 | `zs down <path> [dir]` | `client.download(path, dir)` | `zspace_download` |
 | 连接检查 | `zs check` | `client.is_connected()` | `zspace_check` |
+| 存储池容量 | `zs check` | `client.pool_info()` | `zspace_pool_info` |
+| 磁盘诊断 | — | `client.disk_stats()` | `zspace_disk_stats` |
 
 > `ls` 会自动分页（NAS 单次最多返回 50 条，会循环拉全）；`find` 走 NAS 全文索引，跨目录搜索。
 

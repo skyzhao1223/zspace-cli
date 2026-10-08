@@ -103,6 +103,8 @@ patterns on the source path.
 | Upload | `zs up <local> <dir>` | `client.upload(local, dir, verify=False)` | `zspace_upload` |
 | Download | `zs down <path> [dir]` | `client.download(path, dir)` | `zspace_download` |
 | Health check | `zs check` | `client.is_connected()` | `zspace_check` |
+| Storage pools | `zs check` | `client.pool_info()` | `zspace_pool_info` |
+| Disk diagnostics | — | `client.disk_stats()` | `zspace_disk_stats` |
 
 ---
 

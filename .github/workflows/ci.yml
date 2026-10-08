@@ -108,6 +108,42 @@ jobs:
             exit 1
           fi
           echo "documented skill counts match reality"
+      - name: Docs list every MCP tool
+        shell: bash
+        run: |
+          # The CLI/SDK/MCP mapping table in both READMEs silently omitted two of
+          # the fourteen registered tools (zspace_pool_info, zspace_disk_stats)
+          # for several releases. The stale count then propagated into an external
+          # directory listing that quoted the table, turning a docs bug into a
+          # public one. Derive the truth from the source instead of trusting prose.
+          tools=$(grep -oE '^(async )?def (zspace_[a-z_0-9]+)' src/zspace_cli/mcp_server.py \
+                  | grep -oE 'zspace_[a-z_0-9]+' | sort -u)
+          n=$(printf '%s\n' "$tools" | grep -c .)
+          echo "$n registered MCP tools"
+          fail=0
+          # Guard against a vacuous pass first: if the def pattern ever changes,
+          # $tools goes empty and the per-file loop below would have nothing to
+          # check and report success. Same self-check shape as the skill counts.
+          if [ "$n" -lt 10 ]; then
+            echo "only extracted $n tool names (expected >= 10) - the source pattern"
+            echo "changed and this check is now vacuous; update the grep above"
+            fail=1
+          fi
+          BT='`'
+          for f in README.md docs/README.zh.md; do
+            missing=$(for t in $tools; do grep -qF "$BT$t$BT" "$f" || printf '%s\n' "$t"; done)
+            if [ -n "$missing" ]; then
+              echo "MISSING from $f:"
+              printf '%s\n' "$missing" | sed 's/^/  /'
+              fail=1
+            fi
+          done
+          if [ $fail -ne 0 ]; then
+            echo "Update the mapping table. If a tool was just added or removed,"
+            echo "this is the reminder."
+            exit 1
+          fi
+          echo "both READMEs document all $n MCP tools"
       - name: Smoke tests (offline fixtures, py3.9 = min supported)
         shell: bash
         env:
