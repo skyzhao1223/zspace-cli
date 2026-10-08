@@ -112,7 +112,7 @@ mkdir -p ~/my-nas
 zs skill ~/my-nas/skills/
 ```
 
-- ✅ 显示 `OK 已复制 9 个 skill` → 成功
+- ✅ 显示 `OK 已复制 10 个 skill` → 成功（数字会随版本增加，比这里大是正常的，不是出错）
 - 只想装几本？`zs skill --list` 看清单，`zs skill ~/my-nas/skills/ --only nas-report,photo-organizer` 选装
 
 然后打开你的 AI 助手，**把工作区文件夹作为项目打开**：
@@ -133,6 +133,7 @@ zs skill ~/my-nas/skills/
 | 「给我出个 NAS 存储报告」 | 全盘体检：空间被什么占了、最乱的是哪、建议先整理什么 |
 | 「帮我整理 /Volumes/photo，按日期归档」 | 扫照片 → 给你归档计划 → 你确认后移动 |
 | 「找找重复文件，看能腾多少空间」 | 内容级查重（零误报），列出可删清单让你确认 |
+| 「这个目录太乱了，帮我按类型分个类」 | 通用分类归档：图纸 / 文档 / 图片 / 压缩包… 各归各位；默认不打散项目目录 |
 | 「清理一下下载目录」 | 分诊：安装包/种子/半截下载/该归档的影视 |
 | 「我的备份还新鲜吗」 | 审计备份：过期的、缺的、能轮转删的 |
 | （极空间）「列出 NAS /sata11/my/data 里的文件」 | 直接浏览，不用挂载 |
@@ -164,6 +165,6 @@ python3 ~/my-nas/skills/nas-report/nas_report.py report --root /Volumes/photo
 
 ## 接下来
 
-- 9 个 skill 各自能干什么、对 AI 说什么触发：[skills/README.md](../skills/README.md)
+- 每个 skill 各自能干什么、对 AI 说什么触发：[skills/README.md](../skills/README.md)
 - 完整命令与技术文档：[仓库根 README](../README.md)
 - 卡住了或有想法：欢迎 [提 issue](https://github.com/skyzhao1223/zspace-cli/issues)——新手的问题尤其欢迎，你的问题就是下一个人的文档

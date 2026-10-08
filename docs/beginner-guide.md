@@ -43,7 +43,7 @@ password (ZSpace mode reuses the desktop client you're already logged into).
 | Command | A line of text you paste into Terminal and run with Enter |
 | Mount | Making a NAS folder appear as a local disk on your computer |
 | AI assistant (Agent) | An AI that can operate your computer, e.g. Claude Code |
-| Skill | An "organizer playbook" for the AI — this project ships 9 |
+| Skill | An "organizer playbook" for the AI — this project ships a set of them (`zs skill --list`) |
 
 ---
 
@@ -78,7 +78,7 @@ zs check
 - ✅ Connection OK → basic file ops (browse / move / rename / search) are ready
 - ❌ Fails → make sure the ZSpace app is open and logged in, retry
 
-> **Note:** the 8 organizer skills (photo archiving, de-dup, …) scan a
+> **Note:** the organizer skills (photo archiving, de-dup, type-based sorting, …) scan a
 > **mounted folder** — ZSpace users still need the mount step below (30 seconds)
 > before Step 4. Skip it only if you just want the basic file operations.
 
@@ -126,6 +126,7 @@ Talk to the AI in plain language:
 | "Give me a storage report for my NAS" | Full-disk profile: what eats space, what's messiest, where to start |
 | "Organize /Volumes/photo by date" | Scans photos → proposes an archive plan → moves after you confirm |
 | "Find duplicate files" | Content-level exact de-dup (zero false positives), lists a removal plan |
+| "Sort this messy folder by file type" | Generic type-based archiving (drawings / docs / images / archives…); never breaks up project folders by default |
 | "Clean up my downloads folder" | Triages installers / torrents / partial downloads / media to file away |
 | "Are my backups still fresh?" | Audits backups: stale, missing, or rotatable old versions |
 | (ZSpace) "List the files in /sata11/my/data" | Browses directly — no mount needed |
