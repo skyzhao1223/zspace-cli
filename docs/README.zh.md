@@ -86,7 +86,7 @@ zs skill ~/your-project/skills/ --only nas-report,photo-organizer   # 或按需�
 | **dedup-finder** | 内容级**精确**去重（三级指纹 size→头部→全量 sha1，零误报） |
 | **backup-auditor** | 备份健康审计：版本轮转、陈旧检测、关键目录覆盖核对 |
 
-建议先跑 `nas-report` 看清全局，再按它的建议跑对应专项 skill。最常见的组合是 **`dedup-finder` → `file-sorter`**（先内容级去重、再按类型分类归档；顺序反了会把副本一起搬进新目录）。完整清单见 [skills/README.md](../skills/README.md)。影视库命名是独立项目：[media-manager-skill](https://github.com/skyzhao1223/media-manager-skill)。
+建议先跑 `nas-report` 看清全局，再按它的建议跑对应专项 skill。最常见的组合是 **`dedup-finder` + `file-sorter`**：**推荐先内容级去重**（省掉白搬那些即将删掉的字节，也少产生撞名待确认项），但**反过来也不会漏检**——去重是内容级的、与目录结构无关（实测两种顺序检出同样的重复组）。`file-sorter` 会报「疑似副本共 X MB（占待搬体积 N%）」，按数字决定值不值得先跑一趟去重。完整清单见 [skills/README.md](../skills/README.md)。影视库命名是独立项目：[media-manager-skill](https://github.com/skyzhao1223/media-manager-skill)。
 
 ---
 

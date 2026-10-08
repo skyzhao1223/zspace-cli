@@ -56,7 +56,7 @@ pip install zspace-cli && zs skill ~/your-project/skills/
 
 所有整理 skill 都是同一套安全模式：**只读扫描 → LLM 出 old→new 计划 → 你确认 → Agent 执行**，删除一律先隔离再真删。
 
-> 💡 **「清重复 + 分类」组合拳**（最常见的需求）：先 [dedup-finder](dedup-finder/SKILL.md) 内容级去重并隔离副本，再 [file-sorter](file-sorter/SKILL.md) 按类型归档。顺序不能反——否则会把副本一起搬进新目录。
+> 💡 **「清重复 + 分类」组合拳**（最常见的需求）：[dedup-finder](dedup-finder/SKILL.md) 内容级去重并隔离副本 + [file-sorter](file-sorter/SKILL.md) 按类型归档。**推荐先去重**——省掉白搬那些即将删掉的字节，也少产生撞名待确认项；但**反过来也不会漏检**，去重是内容级的、与目录结构无关（实测两种顺序检出同样的重复组）。file-sorter 会报 `疑似副本共 X MB（占待搬体积 N%）`，按这个数字决定值不值得先跑一趟去重。
 
 ### Windows 用户：执行阶段要换命令
 

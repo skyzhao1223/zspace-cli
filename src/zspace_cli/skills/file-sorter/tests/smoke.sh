@@ -271,11 +271,18 @@ assert by_path["build.log"]["action"] == "delete-confirm"
 assert by_path[".DS_Store"]["target"] is None
 assert s["junk_bytes"] > 0
 
-# -- 疑似副本:指向不带标记的本尊,并引导去 dedup-finder
+# -- 疑似副本:指向不带标记的本尊,引导去 dedup-finder,并给出字节数让人自己判断
 d = by_path["合同 副本.pdf"]
 assert any("dedup-finder" in x for x in d["problems"]), d["problems"]
 assert any("合同.pdf" in x for x in d["problems"]), d["problems"]
+# 不再断言"必须先删再搬":顺序不影响正确性,措辞里要说清这点
+assert any("先分类也不会漏检" in x for x in d["problems"]), d["problems"]
+assert not any("确认后再搬" in x for x in d["problems"]), d["problems"]
 assert d["action"] == "move"        # 仍给搬运目标,由 LLM 决定先去重
+# dup_suspect_bytes = 被标记的那个文件大小('contract-1234' = 13B),
+# 让人按字节数判断值不值得先跑一趟去重,而不是背一条规则
+assert s["dup_suspect_bytes"] == 13, s["dup_suspect_bytes"]
+assert s["dup_suspect_bytes"] <= s["move_bytes"], s
 
 # -- 默认不动:跨类别嵌套 + 项目目录内文件都不该出现在 issues 里
 for absent in ("图纸/效果图.jpg", "图纸/立面图.dwg", "文档/规范.docx",

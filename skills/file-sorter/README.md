@@ -96,7 +96,65 @@ issue(带 `files` / `categories` / `sample`),`action=review`。
 `stats.dup_suspects`,引用对象优先选**不带标记的那个**(本尊)。
 
 这是命名启发式,**不是**去重:内容级判定一律交给 `dedup-finder`
-(三级指纹零误报)。SKILL.md 场景 3 明确要求「先去重、再分类」。
+(三级指纹零误报)。命中时同时累加 `stats.dup_suspect_bytes`,人类输出里给出
+「占待搬体积 N%」—— 让用户**按字节数决定**要不要先去重,而不是背一条规则。
+
+### 与 dedup-finder 的先后:是效率问题,不是正确性问题
+
+实测(同一 fixture,3 个同字节 JPG + 1 对同字节 PDF):
+
+| 顺序 | dedup-finder 结果 |
+|------|-------------------|
+| 先去重再分类 | 2 组 / 冗余 3 / 634.8 KB |
+| **先分类再去重** | **2 组 / 冗余 3 / 634.8 KB(完全相同)** |
+
+去重是内容级、与目录结构无关,分类后照样能配对(甚至跨「已分类目录 + 未分类目录」)。
+先去重真正省的是两件事:① 不白搬即将删掉的字节(SMB 上搬几 GB 再删是纯浪费);
+② 少产生 `__2` 撞名 —— 同名副本从两个目录搬进同一类目录会撞名,降级成 `review`,
+凭空多出人工确认项。反过来先分类也有好处:重复文件并排躺在同一目录里更好认,
+还能只对某一类去重(`--root <路径>/图片`)。
+
+**所以文档里不再写「顺序不能反」**(那是早先未经验证的说法),改为给数字让用户自己判断。
+
+<details><summary>自己复现这个实验(约 20 秒,离线)</summary>
+
+```bash
+S=skills; W=$(mktemp -d); mkdir -p "$W"/{a,b,c}
+python3 - "$W" <<'EOF'
+import os, sys
+w = sys.argv[1]; blob = os.urandom(300000)
+for p in ("a/IMG_0001.jpg", "b/照片副本.jpg", "c/IMG_0001.jpg"):   # 同字节,名字/目录都不同
+    open(os.path.join(w, p), "wb").write(blob)
+open(f"{w}/合同.pdf", "wb").write(os.urandom(50000))
+open(f"{w}/合同 副本.pdf", "wb").write(open(f"{w}/合同.pdf", "rb").read())
+open(f"{w}/图纸.dwg", "wb").write(os.urandom(80000))
+EOF
+
+# ① 未分类时先去重(基线)
+python3 $S/dedup-finder/dedup_finder.py scan --root "$W" | grep 重复组
+
+# ② 按 file-sorter 的计划真的把文件搬进类别目录
+python3 $S/file-sorter/file_sorter.py scan --root "$W" --output "$W/plan.json" >/dev/null
+python3 - "$W" <<'EOF'
+import json, os, shutil, sys
+root = sys.argv[1]; d = json.load(open(f"{root}/plan.json"))
+for i in d["issues"]:
+    if i["action"] == "move" and i.get("target"):
+        src, dst = os.path.join(root, i["path"]), os.path.join(root, i["target"])
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        if not os.path.exists(dst):
+            shutil.move(src, dst)
+EOF
+
+# ③ 分类后再去重 —— 组数/冗余数/可回收字节应与 ① 完全一致
+python3 $S/dedup-finder/dedup_finder.py scan --root "$W" | grep 重复组
+rm -rf "$W"
+```
+
+两次都应是 `重复组 2 | 冗余文件 3 | 可回收 634.8 KB`。注意 ② 里 `c/IMG_0001.jpg`
+不会被搬走 —— 它与 `a/IMG_0001.jpg` 撞名,被降级成 `review` 交人工,这正是
+「先去重能少产生撞名」的来源。
+</details>
 
 ## JSON 输出
 
@@ -209,5 +267,6 @@ PY=/usr/bin/python3 bash skills/file-sorter/tests/smoke.sh   # 3.9 兼容验证
 
 - 模式来源:`work-organizer` / `download-cleaner`(同仓库,只读扫描 + LLM 出计划)
 - 类别表参照:`nas-report` 的 `CATEGORIES`
-- 搭配:`dedup-finder`(先去重再分类)、`nas-report`(先画像再决定跑哪个)
+- 搭配:`dedup-finder`(两者谁先都对,先去重更省 I/O——见上「与 dedup-finder 的先后」)、
+  `nas-report`(先画像再决定跑哪个)
 - ZSpace 底座:https://github.com/skyzhao1223/zspace-cli

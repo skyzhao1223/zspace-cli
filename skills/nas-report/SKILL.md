@@ -108,7 +108,8 @@ python3 nas_report.py diff /tmp/report-0901.json /tmp/report-0911.json --capacit
 1. 复用上一轮 `/tmp/report.json` 的 `recommendations`
 2. 按「收益/风险」给用户排序建议:
    - 先易后难:download-cleaner(清垃圾)、dedup-finder(回收空间)见效快、风险低
-   - 目录很乱、多类混放:file-sorter(按类型分类归档)——去重之后、专项整理之前
+   - 目录很乱、多类混放:file-sorter(按类型分类归档)——推荐排在去重之后
+     (省掉白搬即将删掉的字节),但反过来也不会漏检,两者互不依赖
    - 再按需:photo/work/portfolio/music-organizer(结构化整理)
    - 备份类:backup-auditor(先保命,别在没备份时大改)
 3. 用户选定后,**切到对应 skill** 继续(本 skill 到此为止)

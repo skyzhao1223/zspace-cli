@@ -133,7 +133,7 @@ Besides `zspace-nas` (the zero-config base for ZSpace file ops), `zs skill` inst
 | **dedup-finder** | Content-level exact de-dup (3-stage fingerprint size→head→full sha1, zero false positives) |
 | **backup-auditor** | Backup health: version rotation, staleness, coverage check |
 
-Start with `nas-report` to see the big picture, then run whichever specialist it recommends. The most common combo is **`dedup-finder` → `file-sorter`** (de-dup first, then sort by type — the reverse would file the copies away too). See [skills/README.md](https://github.com/skyzhao1223/zspace-cli/blob/main/skills/README.md) for the full list. Media-library naming stays a separate project: [media-manager-skill](https://github.com/skyzhao1223/media-manager-skill).
+Start with `nas-report` to see the big picture, then run whichever specialist it recommends. The most common combo is **`dedup-finder` + `file-sorter`**. De-duping first is *recommended* — you skip moving bytes you're about to delete, and you avoid same-name collisions — but the reverse order misses nothing: de-dup is content-level and independent of directory layout (verified: both orders find the identical duplicate groups). `file-sorter` reports `suspected copies: X MB (N% of the bytes to move)` so you can decide by the number instead of by a rule. See [skills/README.md](https://github.com/skyzhao1223/zspace-cli/blob/main/skills/README.md) for the full list. Media-library naming stays a separate project: [media-manager-skill](https://github.com/skyzhao1223/media-manager-skill).
 
 ---
 
