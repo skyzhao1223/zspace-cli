@@ -2,7 +2,7 @@
 name: work-organizer
 description: Use when 用户想整理 NAS 上的工作文件 — "帮我整理工作目录"、"根目录一堆散文件"、"文档版本太乱(最终版/final/副本)"、"找临时文件和安装包"、"几年没动的文件归档"、"办公文档按项目/年份归位"。只读扫描(scan)找出根目录散文件、版本标记混乱、同名多版本共存、副本、临时/锁定文件、安装包、过期归档候选;LLM 出 old→new 计划,用户确认后由 Agent 执行。
   触发词:工作文件整理、工作目录归档、文档整理、文件版本混乱、最终版 final、副本文件清理、办公文档归档、按项目整理文件、按年份整理、临时文件清理、安装包清理、过期文件归档、work organizer、organize work files。
-  不适用:照片视频按日期整理(走 photo-organizer)、作品集整理(走 portfolio-organizer)、影视命名(走 media-naming)、任意文件重复诊断(走 file-organizer)。
+  不适用:照片视频按日期整理(走 photo-organizer)、作品集整理(走 portfolio-organizer)、影视命名(走 media-naming)、任意类型混合目录按类型分类归档(走 file-sorter)、内容级重复文件(走 dedup-finder)。
 ---
 
 # Work Organizer — 工作文件库正向合规整理

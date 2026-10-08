@@ -84,6 +84,9 @@ head -c 50000 /dev/urandom > "$ROOT/备份/db_2024-01-01.tar.gz"
 # 冷数据(3 年前)
 head -c 300000 /dev/urandom > "$ROOT/影视/old_movie.mkv"
 touch -t 202201010000 "$ROOT/影视/old_movie.mkv"
+# 根目录散文件(20 个 → 触发 file-sorter 路由)
+for i in $(seq 1 12); do printf 'pdf' > "$ROOT/散文件$i.pdf"; done
+for i in $(seq 1 8); do printf 'dwg' > "$ROOT/图纸$i.dwg"; done
 
 NR_SKILL_DIR="$SKILL_DIR" FIXTURE_ROOT="$ROOT" "$PY" - <<'PYEOF'
 import json
@@ -117,10 +120,13 @@ assert s["largest_dirs"], "大目录榜为空"
 assert "影视" in s["toplevel"] and "照片" in s["toplevel"]
 # 冷热分层:old_movie.mkv 是 2022 → cold_3y+
 assert "cold_3y+" in s["by_growth"], s["by_growth"]
+# 根目录散文件:20 个造出来的 + .DS_Store
+assert s["root_files"] == 21, s["root_files"]
 # 路由建议:影视占比高→media-naming;照片 10<500 不触发;垃圾少;文件少
 rec_skills = [x["skill"] for x in data["recommendations"]]
 assert any("media-naming" in x or "media-manager" in x for x in rec_skills), rec_skills
 assert any("backup-auditor" in x for x in rec_skills), rec_skills  # 发现 备份/ 目录
+assert rec_skills[0] == "file-sorter", rec_skills      # 根目录散文件 ≥20 → 排第一
 assert all("why" in x for x in data["recommendations"])
 print("  ✓ report 画像 + 路由建议正确")
 PYEOF
@@ -172,5 +178,27 @@ if not d2["time_reversed"] or d2["growth_bytes_per_day"] is not None:
     print("❌ 顺序反了却没标 time_reversed（或还是给了速率）"); sys.exit(1)
 print("  ✓ 负控制：顺序反了会被标出来，不产生负数速率")
 PYEOF
+
+echo "=== TEST 7: 非 UTF-8 stdout 不崩(Windows / Agent 捕获输出场景) ==="
+# Windows 上 stdout 被重定向时 Python 用 locale 编码(cp1252/GBK)而非 UTF-8,
+# 报告里的中文会 UnicodeEncodeError 让整个扫描中断 —— AI Agent 捕获输出正是此场景。
+ENC_DIR="$(mktemp -d /tmp/nasreport-enc.XXXXXX)"
+mkdir -p "$ENC_DIR/图纸"
+printf 'x' > "$ENC_DIR/图纸/平面.dwg"
+printf 'y' > "$ENC_DIR/合同.pdf"
+rc_utf8=0; rc_ascii=0
+out_utf8=$(PYTHONIOENCODING=utf-8 "$PY" "$SKILL_DIR/nas_report.py" report --root "$ENC_DIR" 2>&1) || rc_utf8=$?
+out_ascii=$(PYTHONIOENCODING=ascii "$PY" "$SKILL_DIR/nas_report.py" report --root "$ENC_DIR" 2>&1) || rc_ascii=$?
+rm -rf "$ENC_DIR"
+if echo "$out_ascii" | grep -q "UnicodeEncodeError"; then
+  echo "  ❌ ascii stdout 下 UnicodeEncodeError — 中文报告把输出编码搞崩了"
+  echo "     需要脚本里的 _force_utf8_stdio() 兜底"
+  exit 1
+fi
+if [ "$rc_utf8" != "$rc_ascii" ]; then
+  echo "  ❌ 退出码随 stdout 编码变化: utf-8=$rc_utf8 ascii=$rc_ascii"
+  exit 1
+fi
+echo "  ✓ ascii stdout 下行为与 utf-8 一致(exit=$rc_ascii),中文不崩"
 
 echo "🎉 所有 smoke test 通过"

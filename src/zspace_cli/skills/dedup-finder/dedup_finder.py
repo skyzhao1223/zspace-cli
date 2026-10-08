@@ -270,7 +270,28 @@ def _print_human(result: dict, top: int) -> None:
         print(f"\n(有 {len(result['errors'])} 条读取错误,见 JSON errors)")
 
 
+def _force_utf8_stdio() -> None:
+    """强制 stdout/stderr 用 UTF-8(否则 Windows 上打印中文会崩)。
+
+    Windows 的输出被重定向时(AI Agent 就是这样调脚本的),Python 用 locale
+    编码(cp1252 / GBK)而不是 UTF-8,任何中文字符都会触发 UnicodeEncodeError
+    让整个扫描中断。errors="replace" 保证再差的编码环境也只是降级显示。
+    人在 PowerShell 里想看清中文,先 `chcp 65001`。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        # sys.stdout 的静态类型是 TextIO,reconfigure 只存在于 TextIOWrapper;
+        # 用 getattr 取既避开类型检查报错,也兼容被替换掉的 stdout(如测试捕获)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
 def main() -> None:
+    _force_utf8_stdio()
     parser = argparse.ArgumentParser(
         description="dedup-finder: 内容级精确去重只读扫描(各品牌 NAS 通用)")
     sub = parser.add_subparsers(dest="cmd", required=True)

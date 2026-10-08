@@ -84,7 +84,8 @@ class Reporter:
         self.stats: dict = {
             "total_files": 0, "total_dirs": 0, "total_size_bytes": 0,
             "by_category": {}, "by_growth": {}, "junk_files": 0,
-            "junk_bytes": 0, "empty_dirs": 0, "largest_files": [],
+            "junk_bytes": 0, "empty_dirs": 0, "root_files": 0,
+            "largest_files": [],
             "largest_dirs": [], "elapsed_sec": 0.0, "truncated": False,
         }
         self._cat: dict[str, dict] = {}
@@ -154,6 +155,8 @@ class Reporter:
                  top_key: str | None, rel_parts: list[str]) -> None:
         self.stats["total_files"] += 1
         self.stats["total_size_bytes"] += size
+        if not rel_parts:
+            self.stats["root_files"] += 1     # 散在根目录的文件(file-sorter 的信号)
 
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
         if name in JUNK_NAMES or name.startswith("._") or ext in JUNK_EXTS \
@@ -221,6 +224,12 @@ class Reporter:
         def top_cat(name: str) -> dict:
             return cat.get(name, {"count": 0, "size": 0})
 
+        if self.stats["root_files"] >= 20:
+            recs.append({
+                "skill": "file-sorter",
+                "why": f"根目录散着 {self.stats['root_files']} 个文件(多类混放),"
+                       "建议先按类型分类归档,再进专项整理",
+            })
         if top_cat("video")["size"] > total * 0.15:
             recs.append({
                 "skill": "media-naming / media-manager-skill",
@@ -344,7 +353,8 @@ def _print_human(result: dict, top: int) -> None:
                   f"{f['path']}")
 
     print(f"\n垃圾/临时/种子: {s['junk_files']} 个 "
-          f"({_human(s['junk_bytes'])}) | 空目录: {s['empty_dirs']} 个")
+          f"({_human(s['junk_bytes'])}) | 空目录: {s['empty_dirs']} 个 "
+          f"| 根目录散文件: {s['root_files']} 个")
 
     recs = result["recommendations"]
     print("\n" + "=" * 70)
@@ -514,7 +524,28 @@ def _print_diff_human(d: dict, top: int, capacity_gb: float | None) -> None:
     print("=" * 70)
 
 
+def _force_utf8_stdio() -> None:
+    """强制 stdout/stderr 用 UTF-8(否则 Windows 上打印中文会崩)。
+
+    Windows 的输出被重定向时(AI Agent 就是这样调脚本的),Python 用 locale
+    编码(cp1252 / GBK)而不是 UTF-8,任何中文字符都会触发 UnicodeEncodeError
+    让整个扫描中断。errors="replace" 保证再差的编码环境也只是降级显示。
+    人在 PowerShell 里想看清中文,先 `chcp 65001`。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        # sys.stdout 的静态类型是 TextIO,reconfigure 只存在于 TextIOWrapper;
+        # 用 getattr 取既避开类型检查报错,也兼容被替换掉的 stdout(如测试捕获)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
 def main() -> None:
+    _force_utf8_stdio()
     parser = argparse.ArgumentParser(
         description="nas-report: NAS 存储画像 + skill 路由(只读,各品牌 NAS 通用)")
     sub = parser.add_subparsers(dest="cmd", required=True)

@@ -17,7 +17,7 @@
 >
 > 📖 大文件分片上传协议的诞生记：[《一次 1.4GB 备份引发的逆向》（CSDN）](https://blog.csdn.net/boyzhaotian/article/details/166349848) · 图文教程：[《极空间 NAS 命令行管理指南》（CSDN）](https://blog.csdn.net/boyzhaotian/article/details/166349965)
 
-[**新手指南**](beginner-guide.zh.md)（零代码基础） · [Skills 说明](../skills/README.md)（含 **8 个跨 NAS 整理 skill**） · [English README](../README.md)
+[**新手指南**](beginner-guide.zh.md)（零代码基础） · [Skills 说明](../skills/README.md)（含 **9 个跨 NAS 整理 skill**） · [English README](../README.md)
 
 <p align="center">
   <img src="assets/demo.gif" alt="zspace-cli 终端演示" width="720">
@@ -68,11 +68,12 @@ zs skill ~/your-project/skills/ --only nas-report,photo-organizer   # 或按需�
 
 复制后，直接对你的 Agent 说「列出 NAS `/sata11/my/data` 里的文件」即可。
 
-除了 `zspace-nas`（极空间零配置文件操作底座），`zs skill` 还会装上**一整套 8 个跨 NAS 整理 skill**。它们的扫描脚本纯 stdlib 零依赖，跑在任意**挂载路径**（SMB/NFS）上——极空间 / 群晖 / 威联通 / 绿联等只要能挂载就能用。全部遵循同一套只读模式：**扫描 → LLM 出 old→new 计划 → 用户确认 → Agent 执行**（删除一律先隔离再真删）。
+除了 `zspace-nas`（极空间零配置文件操作底座），`zs skill` 还会装上**一整套 9 个跨 NAS 整理 skill**。它们的扫描脚本纯 stdlib 零依赖，跑在任意**挂载路径**（SMB/NFS）上——极空间 / 群晖 / 威联通 / 绿联等只要能挂载就能用。全部遵循同一套只读模式：**扫描 → LLM 出 old→new 计划 → 用户确认 → Agent 执行**（删除一律先隔离再真删）。
 
 | Skill | 能做什么 |
 |-------|----------|
 | **nas-report** | 🧭 入口/元技能：全盘存储画像 + 按发现路由到专项 skill |
+| **file-sorter** | 🧹 任意混合目录：按扩展名分 15 类（文档 / 图纸CAD / 设计源文件 / 图片 / 视频 / 压缩包…），算好每个文件的 `old → new`；默认不打散项目目录、不动已归类的文件 |
 | **photo-organizer** | 照片/视频：按拍摄日期归档、截图/微信图识别、连拍去重 |
 | **music-organizer** | 音乐库：歌手/专辑/曲目三层结构、曲目号、封面、内置 ID3v2 解析对照标签 |
 | **work-organizer** | 工作文件：散文件归档、版本混乱、副本清理、过期归档 |
@@ -81,7 +82,7 @@ zs skill ~/your-project/skills/ --only nas-report,photo-organizer   # 或按需�
 | **dedup-finder** | 内容级**精确**去重（三级指纹 size→头部→全量 sha1，零误报） |
 | **backup-auditor** | 备份健康审计：版本轮转、陈旧检测、关键目录覆盖核对 |
 
-建议先跑 `nas-report` 看清全局，再按它的建议跑对应专项 skill。完整清单见 [skills/README.md](../skills/README.md)。影视库命名是独立项目：[media-manager-skill](https://github.com/skyzhao1223/media-manager-skill)。
+建议先跑 `nas-report` 看清全局，再按它的建议跑对应专项 skill。最常见的组合是 **`dedup-finder` → `file-sorter`**（先内容级去重、再按类型分类归档；顺序反了会把副本一起搬进新目录）。完整清单见 [skills/README.md](../skills/README.md)。影视库命名是独立项目：[media-manager-skill](https://github.com/skyzhao1223/media-manager-skill)。
 
 ---
 
@@ -178,7 +179,7 @@ ZS_CONFIG_DIR=~/path/to/zspace-config zs check   # 或环境变量
 每次发布都会向 GHCR 推送多架构镜像（`linux/amd64`、`linux/arm64`），无需自己构建：
 
 ```bash
-docker pull ghcr.io/skyzhao1223/zspace-cli:latest   # 或固定版本，如 :0.1.8
+docker pull ghcr.io/skyzhao1223/zspace-cli:latest   # 或固定版本，如 :0.1.9
 docker run --rm --network host \
   -e ZS_BASE_URL=http://127.0.0.1:13579 \
   -e ZS_CONFIG_DIR=/config \
@@ -276,10 +277,10 @@ zspace-cli/
 - [x] Docker 无头模式（`ZS_BASE_URL` + `docker-compose.yml`）
 - [x] GHCR 预构建多架构镜像（`ghcr.io/skyzhao1223/zspace-cli`，随每次发布推送）
 - [x] 批量 glob 辅助（`glob()` + `zs rm/mv/cp/down` 通配）
-- [x] Agent skill 家族：8 个跨 NAS 整理 skill + `nas-report` 入口、按需安装（`zs skill --list/--only`）
+- [x] Agent skill 家族：9 个跨 NAS 整理 skill（含通用分类归档 `file-sorter`）+ `nas-report` 入口、按需安装（`zs skill --list/--only`）
 - [ ] 照片 EXIF 精确日期（photo-organizer 可选外挂 exiftool / mdls）— [#14](https://github.com/skyzhao1223/zspace-cli/issues/14)
 - [ ] skill 白名单目录 / 扩展名集合支持外部配置覆盖 — [#15](https://github.com/skyzhao1223/zspace-cli/issues/15)
-- [x] 存储增长趋势（对比两次 nas-report 快照）— [#16](https://github.com/skyzhao1223/zspace-cli/issues/16)
+- [x] 存储增长趋势（`nas-report diff` 对比两次快照：类别/目录增减、速率与满盘 ETA）— [#16](https://github.com/skyzhao1223/zspace-cli/issues/16)
 
 ---
 
