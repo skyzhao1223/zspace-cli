@@ -122,7 +122,7 @@ Besides `zspace-nas` (the zero-config base for ZSpace file ops), `zs skill` inst
 | Skill | What it does |
 |-------|--------------|
 | **nas-report** | 🧭 Entry point: whole-disk storage profile + routes you to the right specialist skill |
-| **file-sorter** | 🧹 Any mixed pile: sort by type into 15 categories (docs / CAD drawings / design sources / images / video / archives…), computing each `old → new` path; never breaks up project folders by default |
+| **file-sorter** | 🧹 Any mixed pile: recognizes **255 extensions across 15 categories** (photos / video / audio / docs / ebooks / archives / installers / fonts / code / design sources / CAD drawings / disk images…), computes each `old → new` path, and knows **100 folder-name aliases** so an already-sorted library is never re-sorted. Never breaks up project folders by default |
 | **photo-organizer** | Photos/videos: file by shoot date, screenshots/WeChat images, burst de-dup |
 | **music-organizer** | Music: Artist/Album/Track structure, track numbers, covers, built-in ID3v2 parsing |
 | **work-organizer** | Work files: archive loose files, version chaos, copies, stale-file archiving |
