@@ -10,6 +10,7 @@
 用法:
   python photo_organizer.py scan --root /Volumes/nas/照片
   python photo_organizer.py scan --root ... --json --output /tmp/issues.json
+  python photo_organizer.py scan --root ... --exif      # 读 EXIF 拍摄日期(可选)
 """
 from __future__ import annotations
 
@@ -17,6 +18,8 @@ import argparse
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -148,6 +151,218 @@ def extract_date(name: str) -> tuple[str | None, str]:
     return None, "none"
 
 
+# ── 拍摄日期的外部来源(仅 --exif 启用)────────────────────────────────
+# 硬规则是纯 stdlib:不 import Pillow/exifread,而是 shell out 到机器上已经装好
+# 的 exiftool;macOS 再退一档用 Spotlight 的 mdls;两者都不可用才退回 mtime。
+# 不加 --exif 时下面这些代码一行都不会执行,默认行为与旧版逐字节一致。
+EXIFTOOL_CHUNK = 200       # 单次 exiftool 带多少文件(给命令行长度上限留余量)
+EXIFTOOL_TIMEOUT = 300     # 单批秒数;SMB 挂载卡死时不能把整个扫描挂住
+MDLS_TIMEOUT = 30
+MIN_PLAUSIBLE_YEAR = 1900  # 再早的拍摄日期是坏数据,不是照片
+
+MTIME_SOURCE = "mtime(弱,仅参考)"
+
+# exiftool 给 2024:05:03 14:22:31;mdls 给 2024-05-03 14:22:31 +0000
+_EXIF_TS_RE = re.compile(r"(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})")
+_MDLS_TS_RE = re.compile(
+    r"(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})\s*([+-]\d{2}:?\d{2})?"
+)
+
+# 报告里给每个日期挂的短标签(完整 date_source 仍写进 JSON)
+_SOURCE_TAG = {"exif": "exif", "mdls": "mdls", "filename": "filename",
+               MTIME_SOURCE: "mtime"}
+
+
+def _warn(message: str) -> None:
+    print(f"⚠️ {message}", file=sys.stderr)
+
+
+def _valid_calendar_date(y: str, m: str, d: str) -> str | None:
+    """是真实历法日期、且不早于 MIN_PLAUSIBLE_YEAR 才放行,否则 None。"""
+    try:
+        yi, mi, di = int(y), int(m), int(d)
+        datetime(yi, mi, di)   # 2024-02-30、月日为 00 都在这里抛 ValueError
+    except ValueError:
+        return None
+    if yi < MIN_PLAUSIBLE_YEAR:
+        return None
+    return f"{yi:04d}-{mi:02d}-{di:02d}"
+
+
+def parse_exif_datetime(raw: object) -> str | None:
+    """exiftool 的 DateTimeOriginal → 'YYYY-MM-DD';读不出就是 None。
+
+    exiftool 会把坏值原样吐出来(实测:全零的 `0000:00:00 00:00:00`,甚至任意
+    字符串),所以校验必须在这里做,不能指望它已经过滤过。DateTimeOriginal 是
+    相机当时的本地墙上时间、不带时区,直接取日期即可。
+    """
+    if not isinstance(raw, str):
+        return None
+    m = _EXIF_TS_RE.search(raw)
+    if m is None:
+        return None
+    hh, mi, ss = int(m.group(4)), int(m.group(5)), int(m.group(6))
+    if hh > 23 or mi > 59 or ss > 59:
+        return None
+    return _valid_calendar_date(m.group(1), m.group(2), m.group(3))
+
+
+def parse_mdls_datetime(raw: object) -> str | None:
+    """mdls 的 kMDItemContentCreationDate → 'YYYY-MM-DD'(换算到本机时区)。
+
+    形如 `kMDItemContentCreationDate = 2024-05-03 14:22:31 +0000`;文件没被
+    Spotlight 索引时输出 `(null)`,甚至直接 exit=1 报 could not find。
+
+    Spotlight 给的是 UTC,而本脚本其余日期(mmexport epoch、mtime)都是本机
+    时区 —— 不换算的话,东八区下午拍的照片会被归到前一天,与既有行为不一致。
+    """
+    if not isinstance(raw, str):
+        return None
+    m = _MDLS_TS_RE.search(raw)
+    if m is None:
+        return None
+    stamp = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+    stamp += f" {m.group(4)}:{m.group(5)}:{m.group(6)}"
+    offset = (m.group(7) or "").replace(":", "")
+    fmt = "%Y-%m-%d %H:%M:%S"
+    if offset:
+        stamp, fmt = f"{stamp} {offset}", f"{fmt} %z"
+    try:
+        parsed = datetime.strptime(stamp, fmt)
+    except ValueError:
+        return None
+    if parsed.year < MIN_PLAUSIBLE_YEAR:
+        return None
+    return parsed.astimezone().strftime("%Y-%m-%d")
+
+
+def _path_key(path: str) -> str:
+    """跨平台路径匹配键:大小写归一(Windows)+ 解析符号链接(macOS 的 /tmp)。"""
+    return os.path.normcase(os.path.realpath(path))
+
+
+class DateResolver:
+    """--exif 模式的拍摄日期解析:exiftool → mdls →(调用方兜底 mtime)。
+
+    两个设计决定都是冲着大库去的:
+    - 工具可用性只在构造时用 `shutil.which` 探测一次,不逐文件探测;
+    - exiftool 一次能吃多个路径并输出 `-json`,所以按 EXIFTOOL_CHUNK 批量调用,
+      而不是一张图起一个进程 —— 几万张图的库上那是数量级的差距。
+
+    每一档都失败即退、绝不抛异常:二进制不存在、非零退出、输出不是合法 JSON、
+    文件压根没出现在输出里、日期是坏值,统统交给下一档。
+    """
+
+    def __init__(self) -> None:
+        self.exiftool = shutil.which("exiftool")
+        # mdls 是 macOS 独有的 Spotlight 前端,Linux/Windows 上不存在
+        self.mdls = shutil.which("mdls") if sys.platform == "darwin" else None
+
+    @property
+    def available(self) -> bool:
+        return bool(self.exiftool or self.mdls)
+
+    def tools(self) -> dict[str, str | None]:
+        """探测结果,写进 JSON/报告 —— 用来解释"为什么全退回了 mtime"。"""
+        return {"exiftool": self.exiftool, "mdls": self.mdls}
+
+    def resolve(self, paths: list[str]) -> dict[str, tuple[str, str]]:
+        """批量解析。返回 {原样传入的路径: (date, 'exif'|'mdls')},解不出的不出现。"""
+        found = self._exiftool_batch(paths)
+        rest = [p for p in paths if p not in found]
+        if rest:
+            found.update(self._mdls_batch(rest))
+        return found
+
+    def _exiftool_batch(self, paths: list[str]) -> dict[str, tuple[str, str]]:
+        found: dict[str, tuple[str, str]] = {}
+        exe = self.exiftool
+        if exe is None:
+            return found
+        for start in range(0, len(paths), EXIFTOOL_CHUNK):
+            chunk = paths[start:start + EXIFTOOL_CHUNK]
+            records = self._run_exiftool(exe, chunk)
+            if records is None:
+                continue              # 整批失败 → 这些文件交给 mdls/mtime
+            alias: dict[str, object] | None = None
+            for path in chunk:
+                if path in records:
+                    raw = records[path]
+                else:
+                    # exiftool 对打不开的文件根本不输出条目(只往 stderr 报错),
+                    # 路径也可能被规范化过 —— 用 realpath 键再兜一次
+                    if alias is None:
+                        alias = {_path_key(k): v for k, v in records.items()}
+                    raw = alias.get(_path_key(path))
+                    if raw is None:
+                        continue      # 确实不在输出里 → 交给 mdls/mtime
+                date_text = parse_exif_datetime(raw)
+                if date_text:
+                    found[path] = (date_text, "exif")
+        return found
+
+    def _run_exiftool(self, exe: str, chunk: list[str]) -> dict[str, object] | None:
+        """跑一批。返回 {SourceFile: DateTimeOriginal 原值};整批失败返回 None。"""
+        cmd = [exe, "-json", "-charset", "UTF8", "-DateTimeOriginal", *chunk]
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=EXIFTOOL_TIMEOUT,
+            )
+        except (OSError, subprocess.SubprocessError) as e:
+            _warn(f"exiftool 调用失败,这批退回下一档: {e}")
+            return None
+        # 只要有任意一个文件读不了,exiftool 就 exit=1;但 stdout 里的 JSON 对它
+        # 读得到的那些文件依然完全有效(实测)—— 所以不能拿 returncode 判成败。
+        text = (proc.stdout or "").strip()
+        if not text:
+            return None
+        try:
+            data = json.loads(text)
+        except ValueError as e:
+            _warn(f"exiftool 输出不是合法 JSON,这批退回下一档: {e}")
+            return None
+        if not isinstance(data, list):
+            return None
+        out: dict[str, object] = {}
+        for record in data:
+            if not isinstance(record, dict):
+                continue
+            src = record.get("SourceFile")
+            if isinstance(src, str):
+                out[src] = record.get("DateTimeOriginal")
+        return out
+
+    def _mdls_batch(self, paths: list[str]) -> dict[str, tuple[str, str]]:
+        """逐个问 Spotlight。
+
+        这里刻意不批量:mdls 收多个文件时只按顺序打印值、不带文件名表头,而且实测
+        遇到一个没被索引的文件就**中止整批**(给 f1 / 不存在的文件 / f3,只回了 f1
+        一行就 exit=1)。按行号回填会把日期安到错误的文件上 —— 那是会搬错目录的
+        静默错误,比慢严重得多。所以一次一个。
+
+        代价:每文件一次进程,实测约 24ms/张。它只接手 exiftool 没搞定那部分、
+        且仅 macOS;EXIF 缺失量大的库应该装 exiftool(见 SKILL.md 踩坑)。
+        """
+        exe = self.mdls
+        found: dict[str, tuple[str, str]] = {}
+        if exe is None:
+            return found
+        for path in paths:
+            try:
+                proc = subprocess.run(
+                    [exe, "-name", "kMDItemContentCreationDate", path],
+                    capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", timeout=MDLS_TIMEOUT,
+                )
+            except (OSError, subprocess.SubprocessError):
+                continue              # 单个文件失败不影响其余
+            date_text = parse_mdls_datetime(proc.stdout)
+            if date_text:
+                found[path] = (date_text, "mdls")
+        return found
+
+
 def dir_problems(name: str, depth: int, parent_is_year: bool) -> list[str]:
     """目录名合规校验(正向)。depth: root 的直接子目录=1。"""
     if name.lower() in WHITELIST_DIRS:
@@ -175,10 +390,21 @@ def is_loose(rel_parts: list[str], parent_name: str) -> bool:
 
 
 class Scanner:
-    def __init__(self, root: str, max_depth: int, sample: int) -> None:
+    def __init__(self, root: str, max_depth: int, sample: int,
+                 use_exif: bool = False) -> None:
         self.root = Path(root).resolve()
         self.max_depth = max_depth
         self.sample = sample
+        self.use_exif = use_exif
+        # 不加 --exif 就是 None:整条 exiftool/mdls 代码路径都不会被碰到
+        self.resolver = DateResolver() if use_exif else None
+        # 只有强证据日期才进归档分布;mtime 是弱证据,不计(与既有行为一致)。
+        # --exif 时 exif/mdls 也算强证据 —— mdls 给的是 Spotlight 内容创建时间,
+        # 不是 EXIF 拍摄时间,比 mtime 稳,但报告里会单独标注、SKILL.md 要求抽查。
+        self._strong_sources = {"filename", "exif", "mdls"} if use_exif else {"filename"}
+        self._date_sources: dict[str, int] = {}
+        # --exif 时,文件名提不出日期的媒体文件先攒这里,遍历完再批量问 exiftool
+        self._pending: list[tuple] = []
         self.stats: dict = {
             "dirs": 0, "files": 0, "photos": 0, "videos": 0, "others": 0,
             "junk": 0, "loose": 0, "wechat": 0, "screenshots": 0,
@@ -237,7 +463,6 @@ class Scanner:
 
     def _check_file(self, entry: os.DirEntry, rel_parts: list[str], name: str) -> None:
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-        stem = os.path.splitext(name)[0]
 
         try:
             st = entry.stat()
@@ -278,29 +503,39 @@ class Scanner:
                       ["编辑附属文件 sidecar(移动主图时需一并处理)"])
             return
 
-        # 日期提取
+        # 日期提取:文件名优先 —— 强证据,而且不用起任何子进程
         date, kind = extract_date(name)
-        date_source = "filename" if date else None
-        if not date and mtime:
+        if date:
+            self._report_media(rel_parts, name, size, date, "filename", kind)
+            return
+
+        if self.resolver is not None:
+            # --exif:攒起来,遍历结束后一次性批量问 exiftool/mdls。
+            # 记下此刻的 issues 长度,是为了事后能把结果插回原来的遍历顺序
+            self._pending.append(
+                (len(self.issues), entry.path, rel_parts, name, size, mtime, kind))
+            return
+
+        if mtime:
             date = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
-            date_source = "mtime(弱,仅参考)"
-        if date and date_source == "filename":
-            if kind == "wechat":
-                self.stats["wechat"] += 1
-            elif kind == "screenshot":
-                self.stats["screenshots"] += 1
-            elif kind == "camera" and not _CAMERA_DATED_RE.search(stem):
-                self.stats["camera_no_date"] += 1
-            if not self.stats["date_min"] or date < self.stats["date_min"]:
-                self.stats["date_min"] = date
-            if not self.stats["date_max"] or date > self.stats["date_max"]:
-                self.stats["date_max"] = date
-            month = date[:7]
-            self.stats["by_month"][month] = self.stats["by_month"].get(month, 0) + 1
-        elif kind == "camera":
-            self.stats["camera_no_date"] += 1
-        elif kind == "screenshot":
-            self.stats["screenshots"] += 1
+            self._report_media(rel_parts, name, size, date, MTIME_SOURCE, kind)
+        else:
+            self._report_media(rel_parts, name, size, None, None, kind)
+
+    def _report_media(self, rel_parts: list[str], name: str, size: int,
+                      date: str | None, date_source: str | None,
+                      kind: str) -> None:
+        """照片/视频:日期入账 + 问题判定。
+
+        --exif 模式下文件名提不出日期的文件会推迟到 _resolve_pending() 再走这里,
+        默认模式在遍历中直接调。两条路径共用这一个方法 —— 人类可读报告和 JSON
+        才不会各算一套而漂移。
+        """
+        stem = os.path.splitext(name)[0]
+        if date_source:
+            source_key = "mtime" if date_source == MTIME_SOURCE else date_source
+            self._date_sources[source_key] = self._date_sources.get(source_key, 0) + 1
+        self._account_date(date, date_source, kind, stem)
 
         problems: list[str] = []
 
@@ -328,6 +563,65 @@ class Scanner:
         if m:
             key = ("/".join(rel_parts), m.group(1).upper())
             self._burst.setdefault(key, []).append(int(m.group(2)))
+
+    def _account_date(self, date: str | None, date_source: str | None,
+                      kind: str, stem: str) -> None:
+        """把日期计入归档分布(by_month / date_min / date_max)。
+
+        分桶逻辑与改动前完全一致,只是"哪些来源算强证据"多了一个开关:
+        默认只有 filename,--exif 时再加上 exif / mdls。mtime 始终是弱证据、
+        不入桶 —— 否则一次 SMB 拷贝刷新的时间戳就会伪造出月份分布。
+        """
+        if date is not None and date_source in self._strong_sources:
+            if kind == "wechat":
+                self.stats["wechat"] += 1
+            elif kind == "screenshot":
+                self.stats["screenshots"] += 1
+            elif kind == "camera" and not _CAMERA_DATED_RE.search(stem):
+                self.stats["camera_no_date"] += 1
+            if not self.stats["date_min"] or date < self.stats["date_min"]:
+                self.stats["date_min"] = date
+            if not self.stats["date_max"] or date > self.stats["date_max"]:
+                self.stats["date_max"] = date
+            month = date[:7]
+            self.stats["by_month"][month] = self.stats["by_month"].get(month, 0) + 1
+        elif kind == "camera":
+            self.stats["camera_no_date"] += 1
+        elif kind == "screenshot":
+            self.stats["screenshots"] += 1
+
+    def _resolve_pending(self) -> None:
+        """--exif:遍历结束后批量解析攒下的文件,再补完它们的问题判定。
+
+        为什么不在遍历里逐个解析:exiftool 一次能吃多个路径,批量调用比一张图一个
+        进程快一个数量级;而攒着不立刻判定,是为了避免为拿 EXIF 在 SMB 上走第二遍
+        目录树(那才是真的慢)。默认模式下 _pending 永远是空的。
+
+        解析完把 issue 插回记录的位置,而不是直接 append:这样 --exif 与默认模式的
+        issues 顺序完全一致,两次扫描的 JSON 可以直接对 diff,只有日期字段会变。
+        """
+        if self.resolver is None or not self._pending:
+            return
+        print(f"正在读取拍摄日期({len(self._pending)} 个文件,批量)…",
+              file=sys.stderr)
+        resolved = self.resolver.resolve([item[1] for item in self._pending])
+        inserted = 0
+        for pos, path, rel_parts, name, size, mtime, kind in self._pending:
+            if path in resolved:
+                date, date_source = resolved[path]
+            elif mtime:
+                date = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d")
+                date_source = MTIME_SOURCE
+            else:
+                date, date_source = None, None
+            tail = len(self.issues)
+            self._report_media(rel_parts, name, size, date, date_source, kind)
+            produced = self.issues[tail:]
+            del self.issues[tail:]
+            at = pos + inserted
+            self.issues[at:at] = produced
+            inserted += len(produced)
+        self._pending = []
 
     # -- 连拍聚合 ------------------------------------------------------
 
@@ -361,13 +655,26 @@ class Scanner:
         print(f"正在扫描 {self.root} ...\n", file=sys.stderr)
         if not self.root.is_dir():
             raise SystemExit(f"❌ --root 不是有效目录: {self.root}")
+        if self.resolver is not None and not self.resolver.available:
+            _warn("没找到 exiftool,也没有 mdls —— --exif 会全部退回 mtime"
+                  "(装法见 SKILL.md)")
         self._walk(self.root, [])
+        self._resolve_pending()
         self._flush_bursts()
         by_month = dict(sorted(self.stats.pop("by_month").items()))
         print(
             f'扫描完成: {self.stats["dirs"]} 目录, {self.stats["files"]} 文件\n',
             file=sys.stderr,
         )
+        if self.use_exif:
+            # 只在 --exif 时才多出这两个字段:不加参数时 JSON 与旧版逐字节一致
+            self.stats["date_sources"] = {
+                key: self._date_sources.get(key, 0)
+                for key in ("filename", "exif", "mdls", "mtime")
+            }
+            self.stats["date_tools"] = (
+                self.resolver.tools() if self.resolver is not None else {}
+            )
         return {
             "skill": "photo-organizer",
             "root": str(self.root),
@@ -398,10 +705,29 @@ def _print_human(result: dict, top: int) -> None:
     print(f"散文件 {s['loose']} | 微信图 {s['wechat']} | 截图 {s['screenshots']} "
           f"| 无日期相机原图 {s['camera_no_date']} | 连拍组 {s['burst_groups']} "
           f"| 垃圾 {s['junk']}")
+    # date_sources 只在 --exif 时才存在;不加参数时下面这块一行都不打印
+    sources = s.get("date_sources")
+    if sources:
+        shown = " | ".join(f"{k} {v}" for k, v in sources.items())
+        print(f"日期来源(--exif): {shown}")
+        tools = s.get("date_tools") or {}
+        ready = [name for name, path in tools.items() if path]
+        print(f"外部工具: {'、'.join(ready) if ready else '都没找到'}"
+              f"(缺失时只能退回 mtime)")
+        if sources.get("mdls"):
+            print(f"ℹ️ {sources['mdls']} 个来自 mdls —— Spotlight 的内容创建时间,"
+                  "不是 EXIF 拍摄时间;比 mtime 强,仍建议抽查")
+        if sources.get("mtime"):
+            print(f"⚠️ 有 {sources['mtime']} 个文件没读到 EXIF,退回了 mtime ——"
+                  " 弱证据,归档前请让用户抽查")
+        used = [k for k in ("filename", "exif", "mdls") if sources.get(k)]
+        evidence = f"{'/'.join(used)} 可提取" if used else "无可提取日期"
+    else:
+        evidence = "文件名可提取"
     if s["date_min"]:
-        print(f"日期范围(文件名可提取): {s['date_min']} ~ {s['date_max']}")
+        print(f"日期范围({evidence}): {s['date_min']} ~ {s['date_max']}")
     if s["by_month"]:
-        print("\n按日期归档分布(文件名可提取部分):")
+        print(f"\n按日期归档分布({evidence}部分):")
         for month, n in s["by_month"].items():
             print(f"  {month}: {n} 个文件")
     if s.get("sampled_out"):
@@ -425,6 +751,10 @@ def _print_human(result: dict, top: int) -> None:
             extra = ""
             if item.get("date") and not item["is_dir"]:
                 extra = f"  → {item['date']}"
+                # 逐条标出日期是谁给的;默认模式不加,保持输出与旧版一致
+                src = item.get("date_source") if sources else None
+                if src:
+                    extra += f" [{_SOURCE_TAG.get(src, src)}]"
                 if item.get("suggested_dir"):
                     extra += f" (建议 {item['suggested_dir']}/)"
             print(f"  {tag} {item['path']}{extra}")
@@ -464,6 +794,10 @@ def main() -> None:
                         help="照片库根目录(本地挂载路径),如 /Volumes/nas/照片")
     scan_p.add_argument("--json", action="store_true", help="stdout 输出 JSON")
     scan_p.add_argument("--output", help="写入 JSON 文件路径")
+    scan_p.add_argument(
+        "--exif", action="store_true",
+        help="用外部工具读拍摄日期:exiftool → mdls(仅 macOS)→ mtime 逐级回退。"
+             "可选功能,两者都没装也只是退回 mtime;不加此参数行为与旧版一致")
     scan_p.add_argument("--max-depth", type=int, default=MAX_DEPTH,
                         help=f"最大递归深度(默认 {MAX_DEPTH})")
     scan_p.add_argument("--sample", type=int, default=0,
@@ -476,7 +810,7 @@ def main() -> None:
         print(f"未知命令: {args.cmd}", file=sys.stderr)
         raise SystemExit(1)
 
-    scanner = Scanner(args.root, args.max_depth, args.sample)
+    scanner = Scanner(args.root, args.max_depth, args.sample, args.exif)
     result = scanner.scan()
     if args.output:
         Path(args.output).write_text(

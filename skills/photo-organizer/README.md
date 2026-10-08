@@ -31,6 +31,10 @@ python3 skills/photo-organizer/photo_organizer.py scan \
 
 python3 skills/photo-organizer/photo_organizer.py scan \
   --root /Volumes/nas/照片 --json --output /tmp/photo-issues.json
+
+# 可选(issue #14):用 EXIF 拍摄日期定档
+python3 skills/photo-organizer/photo_organizer.py scan \
+  --root /Volumes/nas/照片 --exif
 ```
 
 ## 检出的问题类型
@@ -50,13 +54,31 @@ python3 skills/photo-organizer/photo_organizer.py scan \
 日期提取优先级:mmexport epoch → 微信图片_ → Screenshot/截屏 →
 `YYYY-MM-DD` 前缀 → `YYYYMMDD` 紧凑 → 相机带日期名 → 全文严格日期 → mtime(弱)。
 
+文件名提不出日期时,`--exif` 会插入两级更强的证据(默认不开):
+
+```
+filename → exiftool -DateTimeOriginal → mdls(仅 macOS) → mtime
+```
+
+每级都失败即退、不抛异常:二进制不存在、非零退出、输出不是合法 JSON、文件不在输出里、
+日期是坏值(`0000:00:00`、1899 年、2 月 30 日)统统交给下一级。探测用 `shutil.which`
+且**每次运行只做一次**;exiftool **批量**调用(200 个路径 + `-json`)。
+实测 464 个文件:批量 exiftool 0.50s(≈0.9ms/张),逐个 mdls 11.4s(≈24ms/张)。
+
+`mdls` 不能批量 —— 它收多个文件时只按顺序打印值、不带文件名表头,而且遇到一个未被
+Spotlight 索引的文件就中止整批,按行号回填会把日期安到错误的文件上。
+
 ## 设计原则
 
 1. **正向验证** — 定义合规结构(年/月/事件),不枚举脏模式
-2. **零依赖** — 纯 stdlib,Python ≥3.9,复制即用
+2. **零依赖** — 纯 stdlib,Python ≥3.9,复制即用。`--exif` 也守这条:不 import
+   Pillow/exifread,而是 shell out 到系统里已有的 exiftool / mdls
 3. **脚本只读** — 无 apply 子命令;写操作走 Agent(shell `mv -n` 或 `zs` CLI/MCP)
-4. **弱证据标注** — `date_source` 区分 filename / mtime,mtime 必须让用户抽查
+4. **弱证据标注** — `date_source` 区分 filename / exif / mdls / mtime;mtime 必须让用户
+   抽查,mdls 也不是 EXIF(是 Spotlight 内容创建时间),同样要抽查
 5. **降噪** — 系统元数据目录(@eaDir/#recycle/.Trashes)与点文件静默跳过
+6. **opt-in 且可证伪** — 不加 `--exif` 时输出与旧版**逐字节一致**,连 JSON 字段都不多一个;
+   smoke test 里有一条负控制专门盯这件事
 
 ## 测试
 
@@ -66,9 +88,22 @@ bash skills/photo-organizer/tests/smoke.sh
 
 完全离线:frontmatter 检查 + py_compile + 纯函数用例 + /tmp fixture 端到端 scan。
 
+`--exif` 的两组测试(TEST 7 / TEST 8)**不依赖机器上装了 exiftool**:
+
+- TEST 7 把 `subprocess.run` 换成假的,直接考 `DateResolver` 的契约 —— 批量调用数、
+  同名不同目录不串日期、`exit=1` 但 JSON 有效时照用、坏输出/OSError 失败即退、
+  mdls 逐个调、`(null)` 不认账、非 macOS 不探测 mdls
+- TEST 8 端到端:把 PATH 换成空目录(exiftool/mdls 都探测不到),断言**无 EXIF 的
+  fixture 退回 mtime**;再断言此时产物与不加 `--exif` 时逐条相同(含顺序);
+  机器上真有 exiftool 时额外跑一遍 happy path,否则显式打印跳过
+
 ## 已知 gap
 
-- 不读 EXIF(保持零依赖);精确拍摄时间需 Agent 外挂 `exiftool`/`mdls`
+- `--exif` 依赖外部二进制,脚本自己不解析 EXIF(纯 stdlib 硬规则);两者都不在时
+  等于没开,只有 mtime
+- 只读 `DateTimeOriginal`,不回退 `CreateDate`/`ModifyDate`,也不看 XMP sidecar
+- `mdls` 对 NAS 挂载盘基本无效(Spotlight 没索引),挂载盘场景实际只有
+  「exiftool 或 mtime」两档
 - 无内容级去重(感知哈希);连拍仅按文件名连号识别
 - 白名单功能区目录名写死中文/英文常见集合,自定义库名需改 `WHITELIST_DIRS`
 
