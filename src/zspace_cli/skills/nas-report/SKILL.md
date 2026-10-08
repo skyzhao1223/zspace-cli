@@ -1,6 +1,6 @@
 ---
 name: nas-report
-description: Use when 用户想给 NAS 做整体存储体检 — "我 NAS 上都存了些啥"、"空间被什么占了"、"帮我做个存储报告"、"哪些数据该归档/清理"、"该用哪个整理 skill"。只读扫描出存储画像(按类别体积/文件数、冷热分层、顶层目录榜、最大文件/目录榜、垃圾与空目录),并按发现路由到专门的整理 skill(photo/music/work/portfolio/download/dedup/backup/media-naming)。这是「元技能」/入口:先跑它看清全局,再决定跑哪个专项 skill。
+description: Use when 用户想给 NAS 做整体存储体检 — "我 NAS 上都存了些啥"、"空间被什么占了"、"帮我做个存储报告"、"哪些数据该归档/清理"、"该用哪个整理 skill"。只读扫描出存储画像(按类别体积/文件数、冷热分层、顶层目录榜、最大文件/目录榜、垃圾与空目录),并按发现路由到专门的整理 skill(file-sorter/photo/music/work/portfolio/download/dedup/backup/media-naming)。这是「元技能」/入口:先跑它看清全局,再决定跑哪个专项 skill。
   触发词:存储报告、存储画像、NAS 体检、空间占用、磁盘占用、都存了什么、大文件榜、冷热数据、数据分层、归档建议、该整理什么、从哪开始整理、storage report、disk usage、what's on my nas、nas profile。
   不适用:具体某类文件的规范整理(那是被路由到的专项 skill 的活);本 skill 只出「画像 + 建议去哪」,不做任何整理写操作。
 ---
@@ -18,12 +18,15 @@ description: Use when 用户想给 NAS 做整体存储体检 — "我 NAS 上都
 ```
         nas-report(画像 + 路由)
                  │
-   ┌─────────┬──┴────┬─────────┬──────────┬─────────┐
-   ▼         ▼       ▼         ▼          ▼         ▼
-photo-    music-   work-   portfolio-  download-  dedup-
-organizer organizer organizer organizer  cleaner   finder
-                                        backup-   media-
-                                        auditor   naming
+                 ├─ file-sorter         通用分类归档(乱目录第一道工序)
+                 ├─ photo-organizer     照片按拍摄日期
+                 ├─ music-organizer     音乐歌手/专辑结构
+                 ├─ work-organizer      办公文档按年份/项目
+                 ├─ portfolio-organizer 作品集项目规范
+                 ├─ download-cleaner    下载区分诊清理
+                 ├─ dedup-finder        内容级精确去重
+                 ├─ backup-auditor      备份健康审计
+                 └─ media-naming        影视命名(外部 skill)
 ```
 
 ## Prerequisites
@@ -66,7 +69,7 @@ python3 nas_report.py diff /tmp/report-0901.json /tmp/report-0911.json --capacit
 | 顶层目录榜 | root 下各一级目录的体积与文件数 |
 | 最大目录榜 | 全库最大的 N 个目录(含子树体积) |
 | 最大文件榜 | 全库最大的 N 个文件(带类别标签) |
-| 垃圾/空目录 | 垃圾/临时/种子文件计数与体积、空目录数 |
+| 垃圾/空目录 | 垃圾/临时/种子文件计数与体积、空目录数、根目录散文件数 |
 
 ## 路由建议(核心价值)
 
@@ -74,6 +77,7 @@ python3 nas_report.py diff /tmp/report-0901.json /tmp/report-0911.json --capacit
 
 | 触发条件 | 路由到 |
 |----------|--------|
+| 根目录散文件 ≥ 20 个 | file-sorter |
 | 影视体积占比 > 15% | media-naming / media-manager-skill |
 | 照片 > 500 张 | photo-organizer |
 | 音频 > 100 首 | music-organizer |
@@ -104,6 +108,7 @@ python3 nas_report.py diff /tmp/report-0901.json /tmp/report-0911.json --capacit
 1. 复用上一轮 `/tmp/report.json` 的 `recommendations`
 2. 按「收益/风险」给用户排序建议:
    - 先易后难:download-cleaner(清垃圾)、dedup-finder(回收空间)见效快、风险低
+   - 目录很乱、多类混放:file-sorter(按类型分类归档)——去重之后、专项整理之前
    - 再按需:photo/work/portfolio/music-organizer(结构化整理)
    - 备份类:backup-auditor(先保命,别在没备份时大改)
 3. 用户选定后,**切到对应 skill** 继续(本 skill 到此为止)

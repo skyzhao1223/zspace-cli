@@ -19,7 +19,7 @@ mcp-name: io.github.skyzhao1223/zspace-cli
 >
 > 📖 How large-file sliced upload was born: [一次 1.4GB 备份引发的逆向 (zh, CSDN)](https://blog.csdn.net/boyzhaotian/article/details/166349848) · CLI guide: [极空间 NAS 命令行管理指南 (zh, CSDN)](https://blog.csdn.net/boyzhaotian/article/details/166349965)
 
-[**Beginner guide**](https://github.com/skyzhao1223/zspace-cli/blob/main/docs/beginner-guide.md) (no coding required) · [Skills](https://github.com/skyzhao1223/zspace-cli/blob/main/skills/README.md) — incl. **8 cross-NAS organizer skills** for AI agents · [中文文档](https://github.com/skyzhao1223/zspace-cli/blob/main/docs/README.zh.md)
+[**Beginner guide**](https://github.com/skyzhao1223/zspace-cli/blob/main/docs/beginner-guide.md) (no coding required) · [Skills](https://github.com/skyzhao1223/zspace-cli/blob/main/skills/README.md) — incl. **9 cross-NAS organizer skills** for AI agents · [中文文档](https://github.com/skyzhao1223/zspace-cli/blob/main/docs/README.zh.md)
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/skyzhao1223/zspace-cli/main/docs/assets/demo.gif" alt="zspace-cli terminal demo" width="720">
@@ -116,11 +116,12 @@ zs skill ~/your-project/skills/ --only nas-report,photo-organizer   # or pick a 
 
 Then tell your agent things like "list the files in `/sata11/my/data`". The skills ship inside the wheel, so `zs skill` works on any machine that has `zspace-cli` installed.
 
-Besides `zspace-nas` (the zero-config base for ZSpace file ops), `zs skill` installs a family of **8 cross-NAS organizer skills**. Their scanners are pure-stdlib and run on any **mounted** path (SMB/NFS), so they work with ZSpace, Synology, QNAP, UGREEN, etc. All follow the same read-only pattern: **scan → the LLM drafts an old→new plan → you confirm → the agent executes** (deletes always quarantine first).
+Besides `zspace-nas` (the zero-config base for ZSpace file ops), `zs skill` installs a family of **9 cross-NAS organizer skills**. Their scanners are pure-stdlib and run on any **mounted** path (SMB/NFS), so they work with ZSpace, Synology, QNAP, UGREEN, etc. All follow the same read-only pattern: **scan → the LLM drafts an old→new plan → you confirm → the agent executes** (deletes always quarantine first).
 
 | Skill | What it does |
 |-------|--------------|
 | **nas-report** | 🧭 Entry point: whole-disk storage profile + routes you to the right specialist skill |
+| **file-sorter** | 🧹 Any mixed pile: sort by type into 15 categories (docs / CAD drawings / design sources / images / video / archives…), computing each `old → new` path; never breaks up project folders by default |
 | **photo-organizer** | Photos/videos: file by shoot date, screenshots/WeChat images, burst de-dup |
 | **music-organizer** | Music: Artist/Album/Track structure, track numbers, covers, built-in ID3v2 parsing |
 | **work-organizer** | Work files: archive loose files, version chaos, copies, stale-file archiving |
@@ -129,7 +130,7 @@ Besides `zspace-nas` (the zero-config base for ZSpace file ops), `zs skill` inst
 | **dedup-finder** | Content-level exact de-dup (3-stage fingerprint size→head→full sha1, zero false positives) |
 | **backup-auditor** | Backup health: version rotation, staleness, coverage check |
 
-Start with `nas-report` to see the big picture, then run whichever specialist it recommends. See [skills/README.md](https://github.com/skyzhao1223/zspace-cli/blob/main/skills/README.md) for the full list. Media-library naming stays a separate project: [media-manager-skill](https://github.com/skyzhao1223/media-manager-skill).
+Start with `nas-report` to see the big picture, then run whichever specialist it recommends. The most common combo is **`dedup-finder` → `file-sorter`** (de-dup first, then sort by type — the reverse would file the copies away too). See [skills/README.md](https://github.com/skyzhao1223/zspace-cli/blob/main/skills/README.md) for the full list. Media-library naming stays a separate project: [media-manager-skill](https://github.com/skyzhao1223/media-manager-skill).
 
 ---
 
@@ -274,10 +275,10 @@ For cloud-drive → NAS pipelines, combine with [baidu-pan-skill](https://github
 - [x] Linux / Windows client auth (best-effort path detection + `ZS_CONFIG_DIR`)
 - [x] Docker headless option (`ZS_BASE_URL` + `docker-compose.yml`)
 - [x] Batch glob helpers (`glob()` + `zs rm/mv/cp/down` patterns)
-- [x] Agent skill family: 8 cross-NAS organizers + `nas-report` entry, selective install (`zs skill --list/--only`)
+- [x] Agent skill family: 9 cross-NAS organizers (incl. `file-sorter` for generic type-based archiving) + `nas-report` entry, selective install (`zs skill --list/--only`)
 - [ ] Optional EXIF-based photo dating (`photo-organizer` via exiftool/mdls) — [#14](https://github.com/skyzhao1223/zspace-cli/issues/14)
 - [ ] Per-skill config overrides (whitelist dirs / extension sets) — [#15](https://github.com/skyzhao1223/zspace-cli/issues/15)
-- [ ] Growth-trend reports (diff two `nas-report` snapshots) — [#16](https://github.com/skyzhao1223/zspace-cli/issues/16)
+- [x] Growth-trend reports (`nas-report diff` two snapshots: category/dir growth, rate & ETA) — [#16](https://github.com/skyzhao1223/zspace-cli/issues/16)
 
 ---
 

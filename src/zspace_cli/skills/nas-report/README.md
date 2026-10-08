@@ -37,7 +37,7 @@ python3 skills/nas-report/nas_report.py report \
 - **按类别**:影视/音频/照片/文档/压缩包/安装包/设计/代码/备份/其他 的体积与占比
 - **冷热分层**:按 mtime 分 hot_30d / warm_1y / cool_3y / cold_3y+
 - **顶层目录榜 / 最大目录榜 / 最大文件榜**
-- **垃圾与空目录**:垃圾/临时/种子计数与体积、空目录数
+- **垃圾与空目录**:垃圾/临时/种子计数与体积、空目录数、根目录散文件数
 
 ## 路由逻辑(_recommend)
 
@@ -45,6 +45,7 @@ python3 skills/nas-report/nas_report.py report \
 
 | 触发 | 路由 |
 |------|------|
+| 根目录散文件 ≥ 20 | file-sorter |
 | 影视体积 > 15% | media-naming / media-manager-skill |
 | 照片 > 500 | photo-organizer |
 | 音频 > 100 | music-organizer |
@@ -86,5 +87,5 @@ bash skills/nas-report/tests/smoke.sh
 ## 参考
 
 - 模式来源:`media-naming`(https://github.com/coracoo/zspace_skill)
-- 家族成员:nas-report(入口)→ photo/work/portfolio/music/download/dedup/backup + media-naming
+- 家族成员:nas-report(入口)→ file-sorter/photo/work/portfolio/music/download/dedup/backup + media-naming
 - ZSpace 底座:https://github.com/skyzhao1223/zspace-cli

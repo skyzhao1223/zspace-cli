@@ -62,8 +62,8 @@ scanner.
 
 ## Organizer skill family (any NAS via mount)
 
-`zs skill` installs 8 read-only organizer skills on top of `zspace-nas`:
-`nas-report` (entry point), `photo-organizer`, `music-organizer`,
+`zs skill` installs 9 read-only organizer skills on top of `zspace-nas`:
+`nas-report` (entry point), `file-sorter`, `photo-organizer`, `music-organizer`,
 `work-organizer`, `portfolio-organizer`, `download-cleaner`, `dedup-finder`,
 `backup-auditor`.
 

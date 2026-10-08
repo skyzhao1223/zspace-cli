@@ -2,7 +2,7 @@
 name: dedup-finder
 description: Use when 用户想找 NAS 上的重复文件 — "哪些文件重复了"、"帮我找重复照片/视频/文档"、"磁盘被重复文件占满了"、"下载了好几次同一个东西"、"精确去重不要误删"。只读扫描用三级指纹(size → 头部64KB → 全量 sha1)做内容级精确去重,零误报;每组给出「保留哪个/删哪个」的启发式建议,LLM 出删除计划,用户确认后由 Agent 执行(优先 mv 到隔离目录而非直接 rm)。
   触发词:重复文件、去重、找重复、精确去重、内容去重、哪些文件一样、重复照片、重复视频、重复文档、磁盘浪费、空间回收、dedup、duplicate files、find duplicates、remove duplicates。
-  不适用:文件名相似但内容不同(本 skill 只认内容 hash);照片按日期整理(走 photo-organizer);工作文件版本混乱(走 work-organizer)——那些是「组织」问题不是「内容重复」问题。
+  不适用:文件名相似但内容不同(本 skill 只认内容 hash);照片按日期整理(走 photo-organizer);工作文件版本混乱(走 work-organizer);混合目录按类型分类归档(走 file-sorter — 顺序是「先去重再分类」)——那些是「组织」问题不是「内容重复」问题。
 ---
 
 # Dedup Finder — 内容级精确去重

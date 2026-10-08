@@ -5,7 +5,7 @@
 把这些 Skill 复制到你的 Agent 项目后，用自然语言就能整理你的 NAS。两类定位：
 
 - **`zspace-nas`**：极空间**零配置底座**——读桌面客户端登录态直连 API，无需挂载、无需密码
-- **其余 8 个整理/审计 skill**：**跨 NAS 通用**——扫描脚本纯 stdlib 零依赖，跑在**挂载路径**（SMB/NFS）上，极空间 / 群晖 / 威联通 / 绿联等都能用；写操作极空间可走 `zs` 命令，其他品牌走挂载盘 `mv`
+- **其余 9 个整理/审计 skill**：**跨 NAS 通用**——扫描脚本纯 stdlib 零依赖，跑在**挂载路径**（SMB/NFS）上，极空间 / 群晖 / 威联通 / 绿联等都能用；写操作极空间可走 `zs` 命令，其他品牌走挂载盘 `mv`
 
 ## 30 秒上手
 
@@ -31,7 +31,7 @@ zs skill ~/your-project/skills/            # 全装（--only a,b 可选装）
 open smb://<NAS_IP>/照片                    # 挂载后即 /Volumes/照片
 
 # 2. 复制 skill 到你的项目
-#    （zspace-cli 只当安装器用；8 个整理 skill 不调极空间 API、不需要客户端）
+#    （zspace-cli 只当安装器用；9 个整理 skill 不调极空间 API、不需要客户端）
 pip install zspace-cli && zs skill ~/your-project/skills/
 #    或直接 clone 本仓库，复制 skills/<name>/ 目录
 
@@ -44,6 +44,7 @@ pip install zspace-cli && zs skill ~/your-project/skills/
 | 你说 | 触发 |
 |------|------|
 | 「给我出个 NAS 存储报告」「空间都被什么占了」 | **nas-report**（入口，会推荐下一步） |
+| 「这目录什么都往里丢，帮我按类型分个类」「图纸和文档混在一起」 | **file-sorter** |
 | 「帮我整理照片库，按拍摄日期归档」「截图太多了」 | photo-organizer |
 | 「整理音乐库」「歌曲文件名带水印」「补曲目号」 | music-organizer |
 | 「工作目录太乱帮我归档」「文档全是最终版final」 | work-organizer |
@@ -54,6 +55,25 @@ pip install zspace-cli && zs skill ~/your-project/skills/
 | 「列出 / 移动 / 重命名 NAS 上的文件」（极空间） | zspace-nas |
 
 所有整理 skill 都是同一套安全模式：**只读扫描 → LLM 出 old→new 计划 → 你确认 → Agent 执行**，删除一律先隔离再真删。
+
+> 💡 **「清重复 + 分类」组合拳**（最常见的需求）：先 [dedup-finder](dedup-finder/SKILL.md) 内容级去重并隔离副本，再 [file-sorter](file-sorter/SKILL.md) 按类型归档。顺序不能反——否则会把副本一起搬进新目录。
+
+### Windows 用户：执行阶段要换命令
+
+**扫描阶段跨平台**——9 个整理 skill 的脚本都是纯 stdlib，只要 NAS 挂载成本地盘（`Z:\` 这样的映射盘）就能跑，`python xxx.py scan --root Z:\data` 即可。（说明：脚本本身不依赖任何 POSIX 特性，但 CI 的 smoke 测试目前只在 ubuntu 上跑，**Windows 上的扫描尚未自动化验证**——见 `docs/CONTRIBUTION_IDEAS.md`。）
+
+**执行阶段**（Agent 按计划搬文件）各 SKILL.md 里的示例是 POSIX 的 `mv -n` / `mkdir -p`，PowerShell 里没有这两个命令。对照：
+
+| 意图 | macOS / Linux | Windows PowerShell |
+|------|---------------|--------------------|
+| 建目录 | `mkdir -p "图纸"` | `New-Item -ItemType Directory -Force "Z:\data\图纸"` |
+| 移动且不覆盖 | `mv -n "x.dwg" "图纸/"` | `Move-Item "Z:\data\x.dwg" "Z:\data\图纸\"`（**不要加 `-Force`**，加了就是覆盖） |
+| 删除＝先隔离 | `mv -n "x" "_quarantine/"` | `Move-Item "Z:\data\x" "Z:\data\_quarantine\"` |
+| 批量同类 | `mv -n *.dwg "图纸/"` | `robocopy "Z:\data" "Z:\data\图纸" *.dwg /MOV /XC /XN /XO`（先 `/L` 空跑看清单） |
+
+中文路径先切 UTF-8，否则目录名会乱码：`chcp 65001 > $null`。
+
+> 极空间用户在 Windows 上更省事：直接用 `zs mv` / `zs mkdir`（走 API，不依赖映射盘和 shell 转义）。注意 `zs` 的**零配置登录态读取**在 macOS 上最稳，Windows/Linux 是尽力支持（见 [issue #7](https://github.com/skyzhao1223/zspace-cli/issues/7)）；整理 skill 本身不需要登录态。
 
 ## Skill 清单
 
@@ -70,6 +90,7 @@ pip install zspace-cli && zs skill ~/your-project/skills/
 
 | Skill | 整理对象 | 能做什么 |
 |-------|---------|----------|
+| **file-sorter** | 任意混合目录 | 🧹 **通用第一道工序**：按扩展名分 15 类（文档 / 图纸CAD / 设计源文件 / 图片 / 视频 / 音频 / 电子书 / 压缩包 / 安装包 / 字体 / 代码 / 备份镜像…），算好每个文件的 `old → new`；默认不打散项目目录、不动已归类的文件 |
 | **photo-organizer** | 照片/视频 | 按拍摄日期归档、散图归位、截图/微信图识别、连拍去重、非媒体混入 |
 | **music-organizer** | 音乐库 | 歌手/专辑/曲目三层结构、曲目号、封面、水印名、内置 ID3v2 解析对照路径与标签 |
 | **work-organizer** | 工作文件 | 散文件归档、版本混乱（最终版/final）、同名多版本、副本、临时文件、过期归档 |
