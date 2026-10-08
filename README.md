@@ -125,7 +125,7 @@ Besides `zspace-nas` (the zero-config base for ZSpace file ops), `zs skill` inst
 |-------|--------------|
 | **nas-report** | 🧭 Entry point: whole-disk storage profile + routes you to the right specialist skill |
 | **file-sorter** | 🧹 Any mixed pile: recognizes **255 extensions across 15 categories** (photos / video / audio / docs / ebooks / archives / installers / fonts / code / design sources / CAD drawings / disk images…), computes each `old → new` path, and knows **135 folder-name aliases** (simplified + traditional Chinese + English) so an already-sorted library is never re-sorted. Never breaks up project folders by default |
-| **photo-organizer** | Photos/videos: file by shoot date, screenshots/WeChat images, burst de-dup |
+| **photo-organizer** | Photos/videos: file by shoot date (`--exif` reads the real capture date via exiftool, or mdls on macOS), screenshots/WeChat images, burst de-dup |
 | **music-organizer** | Music: Artist/Album/Track structure, track numbers, covers, built-in ID3v2 parsing |
 | **work-organizer** | Work files: archive loose files, version chaos, copies, stale-file archiving |
 | **portfolio-organizer** | Portfolio: project structure, cover/README, separate finals from sources |
