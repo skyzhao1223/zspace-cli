@@ -82,6 +82,14 @@ jobs:
         env:
           # windows-latest has no python3.exe, only python.exe
           PY: ${{ matrix.os == 'windows-latest' && 'python' || 'python3' }}
+          # The smoke scripts' own inline python heredocs print ✓/❌/中文, which
+          # raises UnicodeEncodeError under Windows' cp1252 redirected stdout —
+          # the same class of bug the scanners just got fixed for. Scoped to
+          # stdio only (not PYTHONUTF8=1, which would also silently change
+          # open()'s default encoding and could mask a real bug). The encoding
+          # regression test inside each smoke.sh still sets =ascii per-command,
+          # which overrides this and keeps testing the scanner's own guard.
+          PYTHONIOENCODING: utf-8
         run: |
           echo "using PY=$PY ($($PY -V 2>&1))"
           for d in skills/*/; do
