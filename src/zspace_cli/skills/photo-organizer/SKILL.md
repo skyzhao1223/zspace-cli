@@ -2,7 +2,7 @@
 name: photo-organizer
 description: Use when 用户想整理 NAS/移动硬盘上的照片视频 — "帮我整理照片库"、"手机备份的照片太乱"、"截图和微信图片按日期归档"、"DCIM/IMG 散图归位"、"连拍太多帮我找出来"、"照片目录名乱七八糟"。只读扫描(scan)找出散图、可从文件名提取日期的截图/微信图/相机原图、连拍组、重复副本、垃圾文件,并给出按 YYYY/YYYY-MM 归档的建议;LLM 出 old→new 计划,用户确认后由 Agent 执行 mv/mkdir。
   触发词:照片整理、相册归档、手机照片备份整理、截图归档、微信图片整理、按日期整理照片、照片重命名、连拍精选、DCIM 整理、IMG 散图、照片库扫描、photo organizer、organize photos、sort photos by date。
-  不适用:影视库命名规范(走 media-naming)、任意文件重复/孤儿诊断(走 file-organizer)、NAS 连接与通用文件操作(走 zspace-nas 或对应 NAS 的文件工具)。
+  不适用:影视库命名规范(走 media-naming)、任意类型混合目录按类型分类归档(走 file-sorter)、内容级重复文件(走 dedup-finder)、NAS 连接与通用文件操作(走 zspace-nas 或对应 NAS 的文件工具)。
 ---
 
 # Photo Organizer — 照片/视频库正向合规整理

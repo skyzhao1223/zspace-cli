@@ -85,12 +85,23 @@ mtime. Pure stdlib constraint means shelling out; keep it opt-in.
 
 ### 🟡 Per-skill config overrides — roadmap
 Whitelist dirs / extension sets via a `skills/<name>/config.json` overlay so
-scanners stop flagging intentional structures.
+scanners stop flagging intentional structures. Two concrete consumers today:
+`file-sorter`'s hardcoded `*_EXTS` category tables (a proprietary extension
+like `.rfa`/`.pln` currently needs a code edit to land in the right folder) and
+its `--keep-dir` whitelist (per-library, so it gets re-typed every run).
 
-### 🟡 Growth-trend reports — roadmap
-`nas-report` snapshots are JSON; add `nas-report diff a.json b.json` (new
-files, growth by category/dir, churn). Pure stdlib, offline-testable — great
-skill-contributor task.
+### 🟢 Windows execution path in the other 8 skills
+`file-sorter/SKILL.md` now documents the PowerShell equivalents
+(`New-Item` / `Move-Item` without `-Force` / `robocopy /MOV /XC /XN /XO`) and
+`skills/README.md` has the family-level table. The other 8 SKILL.md files still
+show only `mv -n` / `mkdir -p`, which do not exist in PowerShell — a Windows
+agent following them verbatim fails at the *execute* step (the read-only scan
+step is fine, it's pure stdlib). Copy the reference table into each
+`写操作通道` section. Docs-only, no code, one skill per PR is fine.
+
+> ✅ Shipped since this list was written: `nas-report diff OLD.json NEW.json`
+> (growth by category/dir, new+vanished large files, rate & ETA) — was
+> "Growth-trend reports", roadmap #16.
 
 ### 🔴 Syncthing / 同步空间 helper
 The client runs a Syncthing fork (`ZSpaceSync`, GUI `127.0.0.1:8384`, API key

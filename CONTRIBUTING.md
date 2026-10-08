@@ -61,7 +61,7 @@ CI fails if the two trees drift.
 
 ## Authoring a new skill
 
-Anatomy — copy any of the 8 existing skills as a template:
+Anatomy — copy any of the 9 existing skills as a template:
 
 ```
 skills/<name>/
@@ -76,6 +76,10 @@ skills/<name>/
 1. **Read-only scripts.** No apply/mv/rm subcommands. The scanner reports problems;
    the agent drafts an `old → new` plan; the user confirms; the agent executes
    (`mv -n` on the mount, or `zs` CLI / MCP on ZSpace). Deletes quarantine first.
+   Document the **Windows execution path** too — `mv -n`/`mkdir -p` don't exist in
+   PowerShell, so give the `Move-Item` (no `-Force` = no clobber) / `New-Item` /
+   `robocopy /MOV /XC /XN /XO` equivalents, or point at `zs mv`. See
+   `skills/file-sorter/SKILL.md` → 写操作通道 for the reference table.
 2. **Pure stdlib, Python ≥ 3.9.** `from __future__ import annotations`; zero
    third-party imports — users run these from a copied folder with whatever
    `python3` they have.
@@ -152,8 +156,10 @@ owner `skyzhao1223`, repo `zspace-cli`, workflow `release.yml`, environment
 left blank. If that config drifts (e.g. the workflow file is renamed), the
 publish step fails with 403.
 
-> `server.json` (MCP registry metadata) is **not** auto-bumped — update its two
-> `version` fields manually when preparing a release.
+> `server.json` (MCP registry metadata) **is** auto-bumped now: the tag-triggered
+> `mcp-registry-publish.yml` rewrites both `version` fields from the newest `v*`
+> tag before publishing. Don't hand-edit them — a manual value just gets
+> overwritten (and if it disagrees with the tag, the registry records the tag).
 
 ## PR checklist
 
