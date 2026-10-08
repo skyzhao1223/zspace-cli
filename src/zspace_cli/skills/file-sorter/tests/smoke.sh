@@ -467,12 +467,17 @@ print("  ✓ 繁体目录名(圖紙/文檔/視頻)认得,不会另建简体目�
 cf = run(target_root=os.environ["FIX_CASE"])
 ci = cf["stats"]["case_insensitive_fs"]
 tgts = [i["target"] for i in cf["issues"] if i.get("target")]
-assert len(set(t.lower() for t in tgts)) == len(tgts), tgts   # 归一化后不得重复
 if ci:
-    assert cf["stats"]["conflicts"] == 1, cf["stats"]   # X.jpg 与 x.jpg 同一路径
+    # macOS APFS / Windows NTFS:X.jpg 与 x.jpg 是**同一路径**,
+    # 折叠后不得重复,否则执行时第二条 mv -n 会静默不搬
+    assert len(set(t.lower() for t in tgts)) == len(tgts), tgts
+    assert cf["stats"]["conflicts"] == 1, cf["stats"]
     assert cf["stats"]["to_move"] == 1 and cf["stats"]["to_review"] == 1, cf["stats"]
 else:
-    assert cf["stats"]["conflicts"] == 0, cf["stats"]   # Linux 上可共存
+    # Linux ext4 等大小写敏感文件系统:两者是合法的不同目标,不该判冲突。
+    # (这条分支在 macOS 上跑不到 —— 由 ubuntu CI 覆盖,两边合起来才是完整验证)
+    assert len(set(tgts)) == len(tgts), tgts
+    assert cf["stats"]["conflicts"] == 0, cf["stats"]
     assert cf["stats"]["to_move"] == 2, cf["stats"]
 print(f"  ✓ 大小写撞名按文件系统实况判定(本机 case_insensitive={ci})")
 
