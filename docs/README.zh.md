@@ -176,7 +176,20 @@ ZS_CONFIG_DIR=~/path/to/zspace-config zs check   # 或环境变量
 
 ### Docker（无头运行）
 
-在容器里跑 CLI / MCP server，连接**宿主机**上的桌面客户端代理——镜像内不需要装客户端：
+每次发布都会向 GHCR 推送多架构镜像（`linux/amd64`、`linux/arm64`），无需自己构建：
+
+```bash
+docker pull ghcr.io/skyzhao1223/zspace-cli:latest   # 或固定版本，如 :0.1.9
+docker run --rm --network host \
+  -e ZS_BASE_URL=http://127.0.0.1:13579 \
+  -e ZS_CONFIG_DIR=/config \
+  -v "$HOME/Library/Application Support/zspace:/config:ro" \
+  ghcr.io/skyzhao1223/zspace-cli zs check
+```
+
+镜像默认命令是 `zs-mcp`，所以 MCP 客户端直接运行 `ghcr.io/skyzhao1223/zspace-cli` 即可启动 server；传 `zs …` 则当 CLI 用。标签为 `latest` 加各个版本号。
+
+用 compose 在容器里跑 CLI / MCP server，连接**宿主机**上的桌面客户端代理——镜像内不需要装客户端：
 
 ```bash
 export ZS_CONFIG_HOST_DIR="$HOME/Library/Application Support/zspace"   # macOS
@@ -187,7 +200,7 @@ docker compose run --rm zspace-cli zs check
 docker compose run --rm zspace-cli zs ls /sata11/my/data
 ```
 
-容器只读挂载宿主机极空间配置（`ZS_CONFIG_HOST_DIR`），并通过 `host.docker.internal` 用 `ZS_BASE_URL` 指向宿主机。Linux 宿主机可用 `network_mode: host` 或自带的 `extra_hosts` 映射。纯容器方式：
+容器只读挂载宿主机极空间配置（`ZS_CONFIG_HOST_DIR`），并通过 `host.docker.internal` 用 `ZS_BASE_URL` 指向宿主机。Linux 宿主机可用 `network_mode: host` 或自带的 `extra_hosts` 映射。自己构建镜像（而不是从 GHCR 拉取）：
 
 ```bash
 docker build -t zspace-cli .
@@ -262,6 +275,7 @@ zspace-cli/
 - [x] 文件上传 / 下载
 - [x] Linux / Windows 客户端鉴权（尽力路径探测 + `ZS_CONFIG_DIR`）
 - [x] Docker 无头模式（`ZS_BASE_URL` + `docker-compose.yml`）
+- [x] GHCR 预构建多架构镜像（`ghcr.io/skyzhao1223/zspace-cli`，随每次发布推送）
 - [x] 批量 glob 辅助（`glob()` + `zs rm/mv/cp/down` 通配）
 - [x] Agent skill 家族：9 个跨 NAS 整理 skill（含通用分类归档 `file-sorter`）+ `nas-report` 入口、按需安装（`zs skill --list/--only`）
 - [ ] 照片 EXIF 精确日期（photo-organizer 可选外挂 exiftool / mdls）— [#14](https://github.com/skyzhao1223/zspace-cli/issues/14)

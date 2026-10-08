@@ -183,8 +183,24 @@ ZS_CONFIG_DIR=~/path/to/zspace-config zs check   # or as an env var
 
 ### Docker (headless)
 
-Run the CLI / MCP server in a container and talk to the desktop client proxy
-on the **host** — no desktop client needed inside the image:
+Multi-arch images (`linux/amd64`, `linux/arm64`) are published to GHCR on every
+release, so there is nothing to build:
+
+```bash
+docker pull ghcr.io/skyzhao1223/zspace-cli:latest   # or pin a release, e.g. :0.1.9
+docker run --rm --network host \
+  -e ZS_BASE_URL=http://127.0.0.1:13579 \
+  -e ZS_CONFIG_DIR=/config \
+  -v "$HOME/Library/Application Support/zspace:/config:ro" \
+  ghcr.io/skyzhao1223/zspace-cli zs check
+```
+
+The image's default command is `zs-mcp`, so an MCP client can run
+`ghcr.io/skyzhao1223/zspace-cli` directly to start the server; pass `zs …` to
+use the CLI instead. Tags are `latest` plus each release version.
+
+To run the CLI / MCP server in a container against the desktop client proxy on
+the **host** via compose — no desktop client needed inside the image:
 
 ```bash
 export ZS_CONFIG_HOST_DIR="$HOME/Library/Application Support/zspace"   # macOS
@@ -197,8 +213,8 @@ docker compose run --rm zspace-cli zs ls /sata11/my/data
 
 It mounts the host's ZSpace config read-only (`ZS_CONFIG_HOST_DIR`) and points
 `ZS_BASE_URL` at the host via `host.docker.internal`. On Linux hosts, either use
-`network_mode: host` or the included `extra_hosts` mapping. For a plain
-container run:
+`network_mode: host` or the included `extra_hosts` mapping. To build the image
+yourself instead of pulling it from GHCR:
 
 ```bash
 docker build -t zspace-cli .
@@ -274,6 +290,7 @@ For cloud-drive → NAS pipelines, combine with [baidu-pan-skill](https://github
 - [x] File upload/download
 - [x] Linux / Windows client auth (best-effort path detection + `ZS_CONFIG_DIR`)
 - [x] Docker headless option (`ZS_BASE_URL` + `docker-compose.yml`)
+- [x] Pre-built multi-arch images on GHCR (`ghcr.io/skyzhao1223/zspace-cli`, published per release)
 - [x] Batch glob helpers (`glob()` + `zs rm/mv/cp/down` patterns)
 - [x] Agent skill family: 9 cross-NAS organizers (incl. `file-sorter` for generic type-based archiving) + `nas-report` entry, selective install (`zs skill --list/--only`)
 - [ ] Optional EXIF-based photo dating (`photo-organizer` via exiftool/mdls) — [#14](https://github.com/skyzhao1223/zspace-cli/issues/14)
