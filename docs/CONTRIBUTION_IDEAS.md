@@ -90,29 +90,30 @@ scanners stop flagging intentional structures. Two concrete consumers today:
 like `.rfa`/`.pln` currently needs a code edit to land in the right folder) and
 its `--keep-dir` whitelist (per-library, so it gets re-typed every run).
 
-### 🟢 Windows execution path in the other 8 skills
-`file-sorter/SKILL.md` now documents the PowerShell equivalents
-(`New-Item` / `Move-Item` without `-Force` / `robocopy /MOV /XC /XN /XO`) and
-`skills/README.md` has the family-level table. The other 8 SKILL.md files still
-show only `mv -n` / `mkdir -p`, which do not exist in PowerShell — a Windows
-agent following them verbatim fails at the *execute* step. Copy the reference
-table into each `写操作通道` section. Docs-only, no code, one skill per PR is fine.
+### 🟢 Add `.gitattributes` and normalize the CRLF file
+There is no `.gitattributes`, so line endings are whatever the contributor's
+editor produced. `skills/nas-report/nas_report.py` (+ its packaged copy) came in
+via #25 as **CRLF** while the other 8 scanners are LF — a scripted edit that
+reads/writes in text mode silently rewrites all 600 lines and turns a 16-line
+change into a whole-file diff. Add `*.py text eol=lf` (and `*.sh`, `*.md`), then
+`git add --renormalize .` in its own commit so the noise is isolated and
+reviewable. Until then: edit that file with `newline=""` and re-insert with
+`\r\n`.
 
-### 🟡 Run the skill smoke tests on Windows in CI
-The `skills` job is `runs-on: ubuntu-latest` only, and the `windows-latest`
-matrix entries run just `ruff check src tests` + `pytest`. So **no skill scanner
-has ever been executed on Windows in CI**, even though Windows is a first-class
-audience (极空间's client ships for it) and the scanners are advertised as
-cross-platform. windows-latest has git-bash, so `bash "$d/tests/smoke.sh"`
-should work — but audit the fixtures first: they lean on `mktemp -d /tmp/...`,
-`touch -t YYYYMMDDhhmm`, `seq`, `head -c /dev/urandom` and CJK filenames, and
-`/dev/urandom` in particular is not a given. Cheap version: add a
-`skills-windows` job for one skill (file-sorter) and expand once it is green.
-Until then, "扫描脚本跨平台" is a **design claim, not a tested one**.
-
-> ✅ Shipped since this list was written: `nas-report diff OLD.json NEW.json`
-> (growth by category/dir, new+vanished large files, rate & ETA) — was
-> "Growth-trend reports", roadmap #16.
+> ✅ Shipped since this list was written:
+> - `nas-report diff OLD.json NEW.json` (growth by category/dir, new+vanished
+>   large files, rate & ETA) — was "Growth-trend reports", roadmap #16.
+> - **Windows execution path in every SKILL.md** — was "…in the other 8 skills".
+>   Each `写操作通道` now has a PowerShell row (`New-Item` / `Move-Item` without
+>   `-Force` / `robocopy /MOV /XC /XN /XO`) plus a pointer to the family table.
+> - **Skill smoke tests run on windows-latest** — the `skills` job is now an
+>   ubuntu+windows matrix. Worth knowing: turning it on immediately found a
+>   real bug (every scanner raised `UnicodeEncodeError` printing its Chinese
+>   report to a redirected stdout, i.e. exactly how an agent calls it). The
+>   fixtures did survive git-bash as-is — `mktemp /tmp/...`, `touch -t`, `seq`,
+>   `head -c /dev/urandom` and CJK filenames all work; only `PY=python` (no
+>   `python3.exe`) and `PYTHONIOENCODING=utf-8` for the harness's own `✓` output
+>   were needed.
 
 ### 🔴 Syncthing / 同步空间 helper
 The client runs a Syncthing fork (`ZSpaceSync`, GUI `127.0.0.1:8384`, API key

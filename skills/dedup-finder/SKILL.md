@@ -104,8 +104,11 @@ python3 dedup_finder.py scan --root /Volumes/nas/照片 --root /Volumes/nas/下�
 | 通道 | 适用 | 命令 |
 |------|------|------|
 | 挂载盘 shell | 任何 NAS | `mv -n` 到隔离目录(推荐)/ `rm`(确认后) |
+| PowerShell(Windows) | 任何 NAS | `New-Item -ItemType Directory -Force` 建目录 + `Move-Item`(**不加 `-Force`** = 不覆盖);批量 `robocopy /MOV /XC /XN /XO` |
 | `zs` CLI | 极空间 | `zs mv` / `zs rm`(见 zspace-nas skill) |
 | MCP tool | 极空间 + MCP | `move` / `remove`,弹 UI 二次确认 |
+
+> **Windows**:上表第一行是 POSIX 命令,PowerShell 里没有 `mv -n` / `mkdir -p`,照着执行会直接失败。完整对照(含中文路径要先 `chcp 65001`、用隔离目录代替删除)见 [skills/README.md](../README.md) 的「Windows 用户:执行阶段要换命令」;极空间用户可直接用 `zs mv` 绕开 shell 差异。
 
 ## 关键约束
 
