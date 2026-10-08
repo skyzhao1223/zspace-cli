@@ -118,7 +118,35 @@ assert fs.ancestor_cat([]) is None
 assert fs.ancestors("a/b/c") == ["a", "a/b"]
 assert fs.ancestors("a") == []
 
-print("  ✓ 纯函数用例通过")
+# --- 繁体目录名也要认(否则会给繁体库另建一套简体类别目录 = 重复分类)
+for trad, cat in (("圖紙", "cad"), ("文檔", "doc"), ("視頻", "video"),
+                  ("圖片", "image"), ("壓縮包", "archive"), ("安裝包", "installer"),
+                  ("字體", "font"), ("代碼", "code"), ("備份", "backup"),
+                  ("電子書", "ebook"), ("種子", "torrent"), ("待分類", "other"),
+                  ("截圖", "image"), ("音樂", "audio"), ("施工圖", "cad")):
+    assert fs.ancestor_cat([trad]) == cat, (trad, cat)
+
+# --- 撞名判定的归一化:大小写不敏感的文件系统上要折叠
+class _Fake(fs.Sorter):
+    def __init__(self):        # 不碰文件系统的裸壳,只测纯逻辑
+        self._ci = None
+        self.root = None
+_fake = _Fake()
+_fake._ci = False
+assert _fake._norm("图片/X.jpg") == "图片/X.jpg"
+assert _fake._norm("图片/X.jpg") != _fake._norm("图片/x.jpg")
+_fake._ci = True
+assert _fake._norm("图片/X.jpg") == _fake._norm("图片/x.jpg")
+
+# --- 目标目录被同名文件占着要能查出来(mkdir 会 File exists)
+_fake._ci = False
+assert _fake._blocked_by_file("图纸/平面.dwg", {"图纸"}) == "图纸"
+assert _fake._blocked_by_file("图纸/2024/平面.dwg", {"图纸"}) == "图纸"
+assert _fake._blocked_by_file("图纸/2024/平面.dwg", {"图纸/2024"}) == "图纸/2024"
+assert _fake._blocked_by_file("图纸/平面.dwg", {"文档"}) is None
+assert _fake._blocked_by_file("图纸/平面.dwg", set()) is None
+
+print("  ✓ 纯函数用例通过(含繁体别名 / 大小写归一 / 目录撞文件)")
 PYEOF
 
 echo "=== TEST 4: fixture 端到端 scan(乱目录 + 合规库零误报) ==="
@@ -175,7 +203,36 @@ for i in $(seq 0 11); do
   printf 'same' > "$COLL/d$i/x.jpg"
 done
 
-FS_SKILL_DIR="$SKILL_DIR" FIX_ROOT="$ROOT" FIX_LIB="$LIB" FIX_COLL="$FIXTURE/collide" "$PY" - <<'PYEOF'
+# --- 目标目录被同名「文件」占着(mkdir 会 File exists)
+BLOCK="$FIXTURE/blocked"
+mkdir -p "$BLOCK"
+printf 'x' > "$BLOCK/图纸"          # 无扩展名的**文件**,恰好叫 图纸
+printf 'y' > "$BLOCK/平面.dwg"      # 要搬进 图纸/ → 冲突
+printf 'z' > "$BLOCK/合同.pdf"      # 对照组:文档/ 没被占,应正常 move
+
+# --- --root 本身就是类别目录(不该在里面再套一层 图纸/图纸/)
+# 目录名必须真的叫「图纸」:修复是按 root 的 basename 判定的
+ROOTCAT="$FIXTURE/图纸库-root"
+mkdir -p "$ROOTCAT/图纸"
+printf 'a' > "$ROOTCAT/图纸/平面.dwg"
+printf 'b' > "$ROOTCAT/图纸/立面.dxf"
+
+# --- 繁体目录名(不该被当成未分类而另建简体目录)
+TRAD="$FIXTURE/trad"
+mkdir -p "$TRAD/圖紙" "$TRAD/文檔" "$TRAD/視頻"
+printf 'a' > "$TRAD/圖紙/平面.dwg"
+printf 'b' > "$TRAD/文檔/合同.pdf"
+printf 'c' > "$TRAD/視頻/宣传.mp4"
+
+# --- 大小写撞名(X.jpg / x.jpg 在 macOS+Windows 上是同一路径)
+CASE="$FIXTURE/casefold"
+mkdir -p "$CASE/a" "$CASE/b"
+printf 'xxx' > "$CASE/a/X.jpg"
+printf 'yyy' > "$CASE/b/x.jpg"
+
+FS_SKILL_DIR="$SKILL_DIR" FIX_ROOT="$ROOT" FIX_LIB="$LIB" FIX_COLL="$FIXTURE/collide" \
+  FIX_BLOCK="$BLOCK" FIX_ROOTCAT="$ROOTCAT/图纸" FIX_TRAD="$TRAD" FIX_CASE="$CASE" \
+  "$PY" - <<'PYEOF'
 import json
 import os
 import subprocess
@@ -381,6 +438,43 @@ renamed = [i for i in coll["issues"]
 assert len(renamed) == 10, len(renamed)       # x__2 .. x__11
 assert cs["to_move"] == 1, cs                 # 第一个正常归档
 print("  ✓ 同名文件泛滥:自动编号封顶 + 溢出交人工命名")
+
+# -- C: 目标目录被同名「文件」占着 → 不给执行不下去的计划
+bl = run(target_root=os.environ["FIX_BLOCK"])
+blp = {i["path"]: i for i in bl["issues"] if not i.get("is_dir")}
+assert bl["stats"]["dir_file_conflicts"] == 1, bl["stats"]
+assert blp["平面.dwg"]["action"] == "review", blp["平面.dwg"]
+assert blp["平面.dwg"]["confidence"] == "low"
+assert any("mkdir 会失败" in x for x in blp["平面.dwg"]["problems"]), blp["平面.dwg"]
+assert blp["合同.pdf"]["action"] == "move"      # 对照组:文档/ 没被占,照常搬
+assert blp["图纸"]["action"] == "review"        # 那个占位的文件本身归待分类
+print("  ✓ 目标目录被同名文件占着:降级人工确认(旧版会给出 mkdir 必败的计划)")
+
+# -- F: --root 本身就是类别目录 → 不该在里面再套一层
+rc = run(target_root=os.environ["FIX_ROOTCAT"])
+assert rc["stats"]["root_category"] == "cad", rc["stats"]
+assert rc["stats"]["compliant"] == 2 and rc["stats"]["to_move"] == 0, rc["stats"]
+assert rc["count"] == 0, rc["issues"]
+print("  ✓ --root 就是「图纸」目录时:视为已就位,不套 图纸/图纸/")
+
+# -- G: 繁体目录名 → 不该被当成未分类而另建简体目录
+tr = run(target_root=os.environ["FIX_TRAD"])
+assert tr["stats"]["compliant"] == 3 and tr["stats"]["to_move"] == 0, tr["stats"]
+assert tr["count"] == 0, tr["issues"]
+print("  ✓ 繁体目录名(圖紙/文檔/視頻)认得,不会另建简体目录造成重复分类")
+
+# -- E: 大小写撞名。按文件系统**实际**行为断言,所以在 敏感/不敏感 两种 CI 上都成立
+cf = run(target_root=os.environ["FIX_CASE"])
+ci = cf["stats"]["case_insensitive_fs"]
+tgts = [i["target"] for i in cf["issues"] if i.get("target")]
+assert len(set(t.lower() for t in tgts)) == len(tgts), tgts   # 归一化后不得重复
+if ci:
+    assert cf["stats"]["conflicts"] == 1, cf["stats"]   # X.jpg 与 x.jpg 同一路径
+    assert cf["stats"]["to_move"] == 1 and cf["stats"]["to_review"] == 1, cf["stats"]
+else:
+    assert cf["stats"]["conflicts"] == 0, cf["stats"]   # Linux 上可共存
+    assert cf["stats"]["to_move"] == 2, cf["stats"]
+print(f"  ✓ 大小写撞名按文件系统实况判定(本机 case_insensitive={ci})")
 
 # -- 合规库:零误报
 ok = run(target_root=lib)

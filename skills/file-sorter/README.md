@@ -46,6 +46,9 @@ python3 skills/file-sorter/file_sorter.py scan \
 ## 每个文件的判定阶梯(顺序即优先级)
 
 ```
+0. root         --root 自己的目录名能映射到类别      → 当作所有文件的隐含祖先
+                  (--root /Volumes/nas/图纸 时,里面的 dwg 视为已就位,
+                   不会生成 图纸/图纸/ 这种自己套自己的计划)
 1. protected    命中 --keep-dir 白名单            → 跳过,计入 stats.protected
 2. compliant    祖先目录名能映射到本文件的类别      → 跳过,计入 stats.compliant
 3. nested       祖先目录是「别的」类别目录          → 默认跳过(nested_other_cat)
@@ -59,6 +62,8 @@ python3 skills/file-sorter/file_sorter.py scan \
      junk(临时/残留 .log/.tmp/.bak)                action=delete-confirm
      other(扩展名不认识/无扩展名)                  action=review,target=待分类/
      重名冲突(目标已被占)                          action=review,target 加 __2
+     目标目录被同名**文件**占着                     action=review,target 保留但
+                                                      标记 mkdir 会失败
      正常                                           action=move,target=<类别>/…
 ```
 
@@ -88,6 +93,24 @@ issue(带 `files` / `categories` / `sample`),`action=review`。
   返回 `target=None` + 建议保留来源目录名(`图片/d9_x.jpg`),`confidence=low`。
   两个理由:① 避免几千个同名文件时的 O(n²) 试探;② `x__4999.jpg` 这种计划
   对用户毫无价值,命名规则该由人定
+
+## 四个会咬人的边界情况(都已处理 + 有回归测试)
+
+| 情况 | 不处理会怎样 | 现在的行为 |
+|------|--------------|-----------|
+| **大小写撞名**:`a/X.jpg` 与 `b/x.jpg` 都要进 `图片/` | macOS APFS / Windows NTFS 默认**大小写不敏感**,两者是同一路径 → 第二条 `mv -n` **静默不搬**,文件留在原地,而计划显示已成功 | `_probe_case_fold()` 探测后按 `_norm()` 折叠大小写判撞名 → 第二条自动改名 `x__2.jpg` 并降级 `review`。`stats.case_insensitive_fs` 记录探测结果 |
+| **目标目录被同名文件占着**:根目录有个无扩展名文件叫 `图纸`,同时 `平面.dwg` 要搬进 `图纸/` | `mkdir 图纸` 直接 `File exists`,整批执行中断在半路 | 目标的每一级都与现存文件路径比对,命中则 `action=review` + `confidence=low` + 说明「先把那个文件移走(它自己也在本计划里)」;`stats.dir_file_conflicts` 计数 |
+| **`--root` 本身就是类别目录**:`--root /Volumes/nas/图纸` | 计划把里面的 dwg 搬进 `图纸/图纸/`,在自己的图纸库里再套一层 | root 的 basename 若能映射到类别,就当作所有文件的**隐含祖先** → 同类文件视为已就位。`stats.root_category` 记录 |
+| **繁体目录名**:`圖紙/` `文檔/` `視頻/` | 认不出来 → 给繁体用户**另建一套简体类别目录**,等于凭空造出重复分类(本 skill 最该避免的事) | 别名表简繁都收,`_DIR_TO_CAT` 从 100 → **135** 条 |
+
+探测大小写敏感性**不写任何探针文件**(脚本必须只读):拿一个已存在的文件把名字
+`swapcase()` 后 `os.path.exists()` —— 不敏感的文件系统会解析回原文件返回 True,
+敏感的查无此文件返回 False。翻转名恰好也在扫描集合里时判不了,跳过换一个;
+500 个都判不了就退回 `sys.platform in ("darwin", "win32")`。
+
+`_norm()` 只在**撞名判定**时折叠,`target` 输出仍保留原始大小写。
+smoke 里的大小写用例按 `stats.case_insensitive_fs` 分支断言,所以在
+大小写敏感(Linux CI)和不敏感(macOS / Windows CI)两种 runner 上都成立。
 
 ## 疑似副本(不做内容判定)
 
@@ -169,7 +192,11 @@ rm -rf "$W"
     "project_dirs", "project_files",
     "to_move", "to_review", "to_delete",
     "move_bytes", "junk_bytes", "kept_bytes",
-    "dup_suspects", "conflicts", "stale_files",
+    "dup_suspects", "dup_suspect_bytes", "conflicts",
+    "dir_file_conflicts",                                 // 目标目录被同名文件占着
+    "stale_files",
+    "case_insensitive_fs",                                // 探测结果:撞名是否折叠大小写
+    "root_category",                                      // --root 自身是类别目录时为该类
     "filtered_out",                                      // --only-cat 挡掉的
     "omitted_issues", "issues_truncated",                // 计划截断(--max-issues)
     "target_dirs": {"图纸": {"count", "size"}},        // 归档后结构预览
