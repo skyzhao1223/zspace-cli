@@ -90,16 +90,6 @@ scanners stop flagging intentional structures. Two concrete consumers today:
 like `.rfa`/`.pln` currently needs a code edit to land in the right folder) and
 its `--keep-dir` whitelist (per-library, so it gets re-typed every run).
 
-### 🟢 Add `.gitattributes` and normalize the CRLF file
-There is no `.gitattributes`, so line endings are whatever the contributor's
-editor produced. `skills/nas-report/nas_report.py` (+ its packaged copy) came in
-via #25 as **CRLF** while the other 8 scanners are LF — a scripted edit that
-reads/writes in text mode silently rewrites all 600 lines and turns a 16-line
-change into a whole-file diff. Add `*.py text eol=lf` (and `*.sh`, `*.md`), then
-`git add --renormalize .` in its own commit so the noise is isolated and
-reviewable. Until then: edit that file with `newline=""` and re-insert with
-`\r\n`.
-
 > ✅ Shipped since this list was written:
 > - `nas-report diff OLD.json NEW.json` (growth by category/dir, new+vanished
 >   large files, rate & ETA) — was "Growth-trend reports", roadmap #16.
@@ -114,6 +104,10 @@ reviewable. Until then: edit that file with `newline=""` and re-insert with
 >   `head -c /dev/urandom` and CJK filenames all work; only `PY=python` (no
 >   `python3.exe`) and `PYTHONIOENCODING=utf-8` for the harness's own `✓` output
 >   were needed.
+> - **`.gitattributes` + LF normalization** (#36) — `nas_report.py` and its
+>   packaged copy are LF now, so a text-mode edit can no longer silently rewrite
+>   600 lines. `*.sh`/`*.yml`/`*.md` are covered too, which matters because CI
+>   runs the smoke scripts through bash on Windows.
 
 ### 🔴 Syncthing / 同步空间 helper
 The client runs a Syncthing fork (`ZSpaceSync`, GUI `127.0.0.1:8384`, API key
