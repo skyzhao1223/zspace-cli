@@ -48,7 +48,7 @@ python3 file_sorter.py scan --root /Volumes/nas/data --sample 500
 | `--layout {type,type-year,year-type}` | 目标结构:`图纸/` · `图纸/2024/` · `2024/图纸/`(默认 `type`) |
 | `--naming {zh,en}` | 目标目录中文名(`图纸`)或英文名(`Drawings`),默认 zh |
 | `--dest DIR` | 归档到子目录前缀下(如 `--dest 整理后` → `整理后/图纸/`),默认就地归档 |
-| `--keep-dir GLOB` | 白名单目录(可重复),命中整体不动,如 `--keep-dir '2024_*'` |
+| `--keep-dir GLOB` | 白名单目录(可重复),命中整体不动,如 `--keep-dir '2024_*'`;每次都要重打的那几条写进同目录 `config.json` 的 `whitelist_dirs`(见下) |
 | `--strict` | 加查「已在别的类别目录里但类别不符」的文件(默认不动) |
 | `--split-project-dirs` | 拆开疑似项目目录,里面文件也按类型归档(默认整体保留) |
 | `--project-min-files N` | 判定疑似项目目录的最少文件数(默认 3) |
@@ -70,6 +70,151 @@ python3 file_sorter.py scan --root /Volumes/nas/data --keep-dir '2024_官网改�
 # 大库分批:这轮只处理图纸,下一轮再 --only-cat doc
 python3 file_sorter.py scan --root /Volumes/nas/data --only-cat cad --output /tmp/sort-cad.json
 ```
+
+## 配置覆盖(`config.json`,可选)
+
+真实库里总有**故意的例外**:一个 `原盘/VIDEO_TS` 树、一批留着的样片、某个专业
+软件的私有格式。没有这个机制之前,唯一的办法是改脚本里的 `*_EXTS` 集合,或者
+每次运行都把同一串 `--keep-dir` 重打一遍。
+
+**没有这个文件时,本 skill 的行为与引入该机制之前逐字节一致** —— 不多一个 JSON
+字段、不少一条计划。
+
+### 放在哪
+
+`config.json` 按 **脚本自己所在的目录**(`__file__`)解析,**不是** cwd、**也不是**
+`--root`:
+
+```
+skills/file-sorter/          ← zs skill 装好后就是你项目里的那一份
+├── file_sorter.py
+├── config.json              ← 放这里
+└── SKILL.md
+```
+
+按 `__file__` 解析是刻意的:`--root` 底下万一躺着一个 `config.json`(用户把配置
+和数据放一起了、或者被整理对象本身就是个代码目录),它只会被当成一个普通的
+`.json` 文件扫出来(归入 `code`),不会被读成配置。配置跟着**安装**走,不跟着
+**数据**走。
+
+### Schema
+
+两个键都可选;只写一个,另一个不产生任何影响。顶层出现第三个键 → 直接报错退出。
+
+```jsonc
+{
+  // 目录白名单:命中的目录整个子树都不出搬家计划。
+  // 等价于「每次运行都自动加上这几条 --keep-dir」。
+  "whitelist_dirs": ["原盘", "samples", "2024_*"],
+
+  // 扩展名改判:键是扩展名(前导点可写可不写、大小写都行),
+  // 值是本 skill 的类别名。
+  "extension_overrides": {
+    ".rfa": "cad",      // 私有格式:从「待分类」救回「图纸」
+    "ass":  "video",    // 内置判 doc,但字幕该跟着视频走
+    "log":  "doc"       // 内置判 junk(建议清理),可我的 .log 是数据
+  }
+}
+```
+
+| 键 | 类型 | 合并语义 |
+|----|------|---------|
+| `whitelist_dirs` | `string[]` | **追加**到 `--keep-dir`。内置的 135 条目录名别名(`图纸`/`Drawings`/`施工圖`…)一条都不删,两条来源同时生效 |
+| `extension_overrides` | `object` | **逐扩展名改判**,不是整表替换。该扩展名先从**所有**内置 `*_EXTS` / `JUNK_EXTS` 里摘掉,再放进指定的那一张;**没写到的扩展名完全不受影响** |
+
+「逐扩展名」这一点是关键:写 `{"ass": "video"}` 只会让 `.ass` 变视频,`.srt`
+仍然是文档,`.dwg` 仍然是图纸。替换整张表会静默撤掉内置行为 —— 那不是用户想要的。
+
+`extension_overrides` 的可用类别名就是 `--only-cat` 那 15 个:
+
+```
+doc  cad  design  image  video  audio  ebook  archive  installer
+font  code  backup  torrent  junk  other
+```
+
+`other` 是兜底(= 不属于任何一张表,归入「待分类」),写它等于把某个扩展名从
+现有类别里**摘出来**变成待分类。写成别的名字(比如 photo-organizer 才有的
+`sidecar`)会报错,并在报错里列出本 skill 的可用类别。
+
+改不了的:`JUNK_NAMES` 里的**文件名**(`.DS_Store` / `Thumbs.db` / `._*`)。
+`extension_overrides` 只作用于扩展名。
+
+### 模式锚定规则(`whitelist_dirs`)
+
+与 `--keep-dir` 用的是**同一个匹配函数** `_cfg_match()`(它本来就是从
+`--keep-dir` 的实现里抽出来的),所以两者语义完全一致,不存在两套规则:
+
+- `fnmatch` glob(`*` `?` `[seq]`),`*` **会跨过 `/`**
+- **大小写不敏感**(目录名和模式两边都折叠;双向都成立)
+- 匹配对象是**相对 `--root` 的目录路径**,用 `/` 连接;永远不含绝对路径
+- 命中一个目录 = 命中它的**整棵子树**
+- 命中的两条规则是「或」:① 匹配**整段相对路径**;② 匹配**任意一级目录名**
+
+| 模式 | `<root>/原盘/VIDEO_TS/` | `<root>/原盘/` 自己 | `<root>/深层/原盘/子目录/` |
+|------|:--:|:--:|:--:|
+| `原盘` | ✅ 规则② | ✅ 规则①② | ✅ 规则②(任意深度) |
+| `原盘/*` | ✅ 规则① | ❌ | ❌(相对路径不以 `原盘/` 开头) |
+| `深层/原盘/*` | ❌ | ❌ | ✅ 规则① |
+| `*` | ✅ | ✅ | ✅ |
+
+所以那个必须有个确定答案的问题:**「`原盘/*` 匹配 `/vol/原盘/x` 吗?」**
+(设 `--root /vol`)
+
+- `x` 是**目录** → 匹配。`原盘/x/` 及其整棵子树都被白名单保住。
+- `x` 是**文件** → **不**匹配。文件判定拿到的是它的**父目录层级** `["原盘"]`,
+  不含 `/`,匹配不上 `原盘/*`。也就是说 **`原盘/*` 保不住直接躺在 `原盘/` 里的
+  文件**,只保住 `原盘/<子目录>/` 里的。
+- 想把 `原盘/` 自己连同里面所有文件一起保住,写 **`原盘`**(不带 `/*`)。
+- 模式永远**锚定在 `--root`**。`/vol/原盘` 这种绝对路径匹配不上任何东西,所以
+  会**直接报错**,而不是让你以为它生效了。
+
+两条边界(与 `--keep-dir` 完全一致,不是本机制新引入的):
+
+1. **白名单只作用于目录**。直接躺在 `--root` 下的文件不吃白名单,连 `*` 也管不到
+   它们(判定时拿到的父目录层级是空的)。
+2. 命中白名单的文件**仍然计入 `stats`**(`files` / `by_category` / `kept_bytes`),
+   计入 `stats.protected`,只是不出搬家计划 —— 汇报数字不会因此说谎。
+
+### 出错行为
+
+配置文件存在但读不通 → **exit 1**,stderr 里**指名文件路径和出错的那个键**,
+而 `--json` 的 stdout 保持干净(错误绝不混进 JSON,Agent 拿到的 stdout 要么是能
+解析的结果、要么是空的)。
+
+宁可报错也不「警告后忽略」:键名拼错一个字母(`whitelist_dir`)就会让整份配置
+静默失效,而用户看到的现象是「我明明把它加进白名单了,它还在报」—— 这是本机制
+最坏的失败方式,所以未知键一律拒绝。
+
+**校验全部跑完才动手改内置集合**:一份「`whitelist_dirs` 合法、
+`extension_overrides` 非法」的配置不会留下半张改过的表。
+
+会被拒绝的写法(每一条都有 smoke 测试):非法 JSON、**空文件**、顶层不是对象、
+未知键、`whitelist_dirs` 不是数组 / 元素不是字符串 / 空字符串 / 绝对路径
+(`/原盘`、`Z:\data`)、`extension_overrides` 不是对象 / 类别值不是字符串 /
+类别名不存在 / 扩展名含多个点(`tar.gz` —— 扩展名只取文件名最后一段,写 `gz`)/
+扩展名归一化后为空。
+
+### 怎么确认它真的生效了
+
+加载成功时 stderr 打一行(**没有配置文件时这一行不出现**):
+
+```
+ℹ️ 已加载覆盖配置 /…/skills/file-sorter/config.json(whitelist_dirs 2 条,extension_overrides 3 条)
+```
+
+`--json` 里也会多一个 `stats.config`,**只有真加载了配置才会出现**:
+
+```jsonc
+"config": {
+  "path": "/…/skills/file-sorter/config.json",
+  "whitelist_dirs": ["原盘", "samples"],
+  "extension_overrides": {"ass": "video", "rfa": "cad"}
+}
+```
+
+反过来说:**结果里没有 `stats.config` 这个键 = 没找到配置文件 = 你的覆盖没生效**,
+先确认它是不是真的躺在 `file_sorter.py` 旁边(而不是 `--root` 底下)。
+
 
 ## 期望结构
 
@@ -260,7 +405,7 @@ robocopy "Z:\data" "Z:\data\图纸" *.dwg *.dxf *.step /MOV /XC /XN /XO /NJH /NJ
 
 | 坑 | 表现 | 解决 |
 |----|------|------|
-| 有歧义的扩展名 | `.ts` 判为视频(也可能是 TypeScript)、`.obj` 判为 3D 模型(也可能是编译产物)、`.m` 判为代码(也可能是 MATLAB)、`.img`/`.iso` 判为备份镜像 | 看 `by_category` 里该类计数是否离谱;必要时 `--keep-dir` 保住原目录 |
+| 有歧义的扩展名 | `.ts` 判为视频(也可能是 TypeScript)、`.obj` 判为 3D 模型(也可能是编译产物)、`.m` 判为代码(也可能是 MATLAB)、`.img`/`.iso` 判为备份镜像 | 看 `by_category` 里该类计数是否离谱;要长期改判就写进 `config.json` 的 `extension_overrides`(如 `{"ts": "code"}`),只想保住原目录用 `--keep-dir` |
 | 图纸目录里的效果图 | `图纸/渲染.jpg` 被 `--strict` 判为「该去图片/」 | 默认不加 `--strict` 就不会报;这种混放通常是有意的 |
 | pdf 出图与 dwg 分家 | 同一项目的 `.pdf` 进「文档」、`.dwg` 进「图纸」 | 按项目组织的库改用 `--keep-dir '<项目>'`,或整体交给 portfolio-organizer |
 | 项目目录被拆散 | `2024_官网改版/` 里的文件被逐个搬走 | 默认已按「疑似项目目录」保留;误判时调大 `--project-min-files` 或加 `--keep-dir` |
@@ -272,6 +417,9 @@ robocopy "Z:\data" "Z:\data\图纸" *.dwg *.dxf *.step /MOV /XC /XN /XO /NJH /NJ
 | 无扩展名文件 | `README`、`LICENSE`、导出脚本 → 待分类 | 逐条确认;常见的可手工指定去向 |
 | SMB 上扫描慢 | 大库 stat 耗时 | `--sample` 摸底;`--max-depth` 限制层数;分类只 stat 不读内容,比去重快得多 |
 | 中文目录名 + shell | `mv 图纸/x.dwg` 引号/转义问题 | 路径一律加双引号;极空间走 `zs mv` 可避开 shell 转义 |
+| 写了 `config.json` 但没生效 | `--json` 结果里没有 `stats.config` 这个键、stderr 也没有 `ℹ️ 已加载覆盖配置` 那一行 | 它必须躺在 **`file_sorter.py` 旁边**(按 `__file__` 解析),不是 cwd、也不是 `--root`;`--root` 底下的 `config.json` 只会被当成普通 `.json` 文件扫出来 |
+| 配置报错说「未知键」 | 写了 `whitelist_dir`(少个 s)之类 | 刻意报错而不是警告后忽略:键名拼错会让整份配置**静默失效**,而现象是「我明明加进白名单了它还在报」。报错里会列出可用键名,照着改 |
+| `原盘/*` 没保住 `原盘/` 里的文件 | 白名单只匹配到 `原盘/<子目录>/`,直接躺在 `原盘/` 下的文件父层级不含 `/` | 写 `原盘`(不带 `/*`)才能连 `原盘/` 自己一起保住;完整锚定规则见上「模式锚定规则」那张表 |
 | **文件名以 `-` 开头或含 `` ` `` `$` `"` `\` 换行** | `mv -n "-f.pdf" 文档/` → `mv: illegal option -- .`;`-i` 会让 mv 变交互式卡住;`$`/反引号在双引号内**仍会被展开** | 脚本已在 `problems` 里标出并给写法:POSIX 用 `mv -n -- "-f.pdf"` 或 `./-f.pdf`,PowerShell 用 `Move-Item -LiteralPath`;`stats.shell_unsafe_names` 计数 |
 
 ## 已知 gap
@@ -290,6 +438,8 @@ robocopy "Z:\data" "Z:\data\图纸" *.dwg *.dxf *.step /MOV /XC /XN /XO /NJH /NJ
 - **新建的目标目录名只有简体**(`--naming` 只切中/英):繁体库能被**认出**已归类
   (别名表含繁体),但要新建目录时仍是 `图纸/` 而不是 `圖紙/`。繁体用户想要
   繁体目录名,目前得靠 `--dest` 或事后改名
+- **`config.json` 只能改扩展名归类与目录白名单**:类别的**目标目录名**(`图纸/` `Documents/`)、目录名别名表(`_DIR_TO_CAT`)、项目目录启发式的阈值都还是硬编码的,要改得动脚本
+- **`config.json` 是 per-安装、不是 per-库**:一份安装对应一份配置。要给不同的库用不同的白名单,目前只能继续用 `--keep-dir`,或者装两份 skill。加一个 `--config PATH` 是自然的后续(见 PR 说明)
 - **大小写敏感性是探测出来的,不是配置项**:探针靠「已存在文件的大小写翻转名
   是否 exists」判断,极端情况(全部文件名无 ASCII 字母)会退回按平台猜测
   (`darwin`/`win32` → 不敏感)。SMB 挂载的大小写行为取决于挂载参数,
@@ -303,6 +453,6 @@ robocopy "Z:\data" "Z:\data\图纸" *.dwg *.dxf *.step /MOV /XC /XN /XO /NJH /NJ
 | `to_move` 为 0 但目录很乱 | 乱在深层子目录:调大 `--max-depth`;或子目录名恰好命中类别别名 → 换 `--strict` 看跨类别项 |
 | 待归档数量吓人 | 先 `--dest 整理后` 归到独立子目录试水,确认无误再就地整理;或 `--only-cat` 一类一类来 |
 | 报告说 `计划条数已达上限` | 正常保护(避免几 MB JSON 塞爆上下文);用 `--only-cat cad` 这样分批取,或 `--max-issues 0` 全量导出到文件再自己切 |
-| `unknown_exts` 一大堆 | 专业软件私有格式(如 `.rfa`/`.pln` 之外的);把该扩展名加进脚本对应 `*_EXTS` 集合再跑 |
+| `unknown_exts` 一大堆 | 专业软件私有格式;**不用再改脚本了** —— 在同目录 `config.json` 里写 `"extension_overrides": {"<ext>": "<类别>"}`(见上「配置覆盖」),脚本本身保持只读、升级时也不会被覆盖掉 |
 | 搬完发现搬错了 | 所以要求分批 + `mv -n`;JSON 里存着完整 `path`/`target`,可反向生成回滚计划 |
 | 读取失败进 `errors` | 权限或挂载断连;重连后重扫,脚本不会崩 |

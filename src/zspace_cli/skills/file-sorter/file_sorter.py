@@ -27,7 +27,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, NoReturn
 
 MAX_DEPTH = 6
 TOP_N = 10
@@ -101,6 +101,130 @@ BACKUP_EXTS = {
     "qcow2", "sparsebundle", "sparseimage", "dd",
 }
 TORRENT_EXTS = {"torrent"}
+
+# ── 可选覆盖层:config.json(与本脚本同目录)────────────────────────────
+# 「装 skill」是逐目录 copytree(cli.py 的 zs skill,加 --only 也一样),共享模块
+# 装不进用户目录,所以这一段在每个 scanner 里逐字重复 —— 要改就全局搜索替换,
+# 别只改一处。唯一 per-skill 的部分是下面的 CONFIG_EXT_TABLES:类别名 → 本 skill
+# 的扩展名集合;值为 None 表示「不属于任何集合」,即本 skill 的兜底类别。
+CONFIG_NAME = "config.json"
+CONFIG_KEYS = ("whitelist_dirs", "extension_overrides")
+CONFIG_WHITELIST: list[str] = []      # whitelist_dirs 追加到这里(不替换内置)
+CONFIG_INFO: dict[str, object] = {}   # 非空 = 真加载了配置,回写进 stats 供核对
+CONFIG_EXT_TABLES: dict[str, set[str] | None] = {
+    "doc": DOC_EXTS, "cad": CAD_EXTS, "design": DESIGN_EXTS, "image": IMAGE_EXTS,
+    "video": VIDEO_EXTS, "audio": AUDIO_EXTS, "ebook": EBOOK_EXTS,
+    "archive": ARCHIVE_EXTS, "installer": INSTALLER_EXTS, "font": FONT_EXTS,
+    "code": CODE_EXTS, "backup": BACKUP_EXTS, "torrent": TORRENT_EXTS,
+    "junk": JUNK_EXTS, "other": None,
+}
+
+
+def _cfg_die(path: Path, msg: str) -> NoReturn:
+    """配置有问题就**立刻退出**,并指名是哪个文件、哪个键。
+
+    静默忽略一份用户以为生效了的配置是最坏的失败方式:扫描会继续标记他刚加进
+    白名单的目录,而且不给任何解释。
+    """
+    raise SystemExit(f"❌ 配置文件 {path} 无效:{msg}")
+
+
+def _cfg_match(rel_parts: list[str], patterns: list[str]) -> bool:
+    """目录是否命中白名单模式。锚定在 --root,大小写不敏感。
+
+    模式匹配「整段相对路径」**或**「任一级目录名」即命中,fnmatch 的 `*` 会跨过
+    `/`。所以 `原盘/*` 命中 <root>/原盘/VIDEO_TS,但不命中 <root>/x/原盘;不含
+    `/` 的 `原盘` 命中任意深度的同名目录。命中一个目录即命中它的整棵子树。
+    绝对路径永远匹配不上,load_config 会直接报错而不是让你以为它生效了。
+    """
+    if not patterns or not rel_parts:
+        return False
+    joined = "/".join(rel_parts).lower()
+    for pat in patterns:
+        low = pat.lower()
+        if fnmatch.fnmatch(joined, low):
+            return True
+        if any(fnmatch.fnmatch(p.lower(), low) for p in rel_parts):
+            return True
+    return False
+
+
+def load_config(script_dir: Path | None = None) -> None:
+    """读同目录的 config.json,把两个键**并入**内置默认值(不替换)。
+
+    文件不存在 → 立刻返回:没有 config.json 时本 scanner 的输出与引入这段代码
+    之前**逐字节一致**。合并语义、模式锚定规则、报错行为逐条写在 SKILL.md 的
+    「配置覆盖(config.json)」一节。校验全部跑完才动手改内置集合 —— 半途退出
+    会留下一张只改了一半的表,那比直接报错难查得多。
+    """
+    path = (script_dir or Path(__file__).resolve().parent) / CONFIG_NAME
+    if not path.is_file():
+        return
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as e:
+        _cfg_die(path, f"读不了这个文件:{e}")
+    except ValueError as e:
+        _cfg_die(path, f"不是合法 JSON(空文件也算):{e}")
+    if not isinstance(raw, dict):
+        _cfg_die(path, f"顶层必须是 JSON 对象,实际是 {type(raw).__name__}")
+    unknown = sorted(set(raw) - set(CONFIG_KEYS))
+    if unknown:
+        _cfg_die(path, f"未知键 {', '.join(unknown)};可用键只有 "
+                 f"{', '.join(CONFIG_KEYS)}。宁可报错也不警告后忽略 —— 键名拼错"
+                 "一个字母就会让整份配置静默失效,而用户看不出任何区别")
+    wl = raw.get("whitelist_dirs", [])
+    if not isinstance(wl, list):
+        _cfg_die(path, f"whitelist_dirs 必须是字符串数组,实际是 "
+                 f"{type(wl).__name__}(只有一条也要写成 [\"原盘\"])")
+    for i, item in enumerate(wl):
+        if not isinstance(item, str):
+            _cfg_die(path, f"whitelist_dirs[{i}] 必须是字符串,实际是 "
+                     f"{type(item).__name__}")
+        pat = item.strip()
+        if not pat:
+            _cfg_die(path, f"whitelist_dirs[{i}] 是空字符串")
+        if pat.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:[\\/]", pat):
+            _cfg_die(path, f"whitelist_dirs[{i}] 写成了绝对路径 {item!r};"
+                     "模式锚定在 --root,只能写相对路径(如 原盘/*)")
+    ext = raw.get("extension_overrides", {})
+    if not isinstance(ext, dict):
+        _cfg_die(path, f"extension_overrides 必须是对象,实际是 "
+                 f"{type(ext).__name__}")
+    pairs: list[tuple[str, str]] = []
+    for key, cat in ext.items():
+        if not isinstance(cat, str):
+            _cfg_die(path, f"extension_overrides[{key!r}] 必须是字符串类别名,"
+                     f"实际是 {type(cat).__name__}")
+        e = key.strip().lstrip(".").lower()
+        if not e:
+            _cfg_die(path, f"extension_overrides 的键 {key!r} 归一化后是空的")
+        if "." in e:
+            _cfg_die(path, f"extension_overrides 的键 {key!r} 含多个点:扩展名只取"
+                     f"文件名最后一段(tar.gz 的扩展名是 gz),请写成 "
+                     f"{e.rsplit('.', 1)[-1]!r}")
+        if cat not in CONFIG_EXT_TABLES:
+            _cfg_die(path, f"extension_overrides[{key!r}] 的类别 {cat!r} 本 skill "
+                     f"不认识;可用类别:{', '.join(sorted(CONFIG_EXT_TABLES))}")
+        pairs.append((e, cat))
+    # 校验全过才动手。扩展名先从别的表里摘掉再放进指定的那一张,否则
+    # categorize() 的判定阶梯会按它自己的顺序命中旧类别,覆盖看起来没生效。
+    CONFIG_WHITELIST.extend(item.strip() for item in wl)
+    for e, cat in pairs:
+        for name, table in CONFIG_EXT_TABLES.items():
+            if table is not None and name != cat:
+                table.discard(e)
+        target = CONFIG_EXT_TABLES[cat]
+        if target is not None:
+            target.add(e)
+    CONFIG_INFO.update({
+        "path": str(path),
+        "whitelist_dirs": list(CONFIG_WHITELIST),
+        "extension_overrides": dict(pairs),
+    })
+    print(f"ℹ️ 已加载覆盖配置 {path}(whitelist_dirs {len(wl)} 条,"
+          f"extension_overrides {len(pairs)} 条)", file=sys.stderr)
+
 
 # 类别顺序 = 人类可读报告里的展示顺序(junk/other 垫底)
 CATEGORY_ORDER = (
@@ -356,17 +480,13 @@ class Sorter:
         return sys.platform in ("darwin", "win32")
 
     def _protected(self, parts: list[str]) -> bool:
-        """命中 --keep-dir 白名单(匹配任一层目录名或整段相对路径)。"""
-        if not self.keep_dirs or not parts:
-            return False
-        joined = "/".join(parts).lower()
-        for pat in self.keep_dirs:
-            low = pat.lower()
-            if any(fnmatch.fnmatch(p.lower(), low) for p in parts):
-                return True
-            if fnmatch.fnmatch(joined, low):
-                return True
-        return False
+        """命中白名单(--keep-dir + config.json 的 whitelist_dirs)。
+
+        判定逻辑就是 _cfg_match —— 它本来就是从这段代码里抽出来的,所以配置文件
+        里的模式与命令行 --keep-dir 走的是**同一条**匹配路径(同样的 fnmatch、
+        同样的锚定规则、同样大小写不敏感),不存在两套语义。
+        """
+        return _cfg_match(parts, self.keep_dirs)
 
     def _disposition(self, f: FileRec) -> str:
         """该文件的处置:protected / compliant / nested / candidate。"""
@@ -734,6 +854,10 @@ class Sorter:
         self._walk(self.root, [])
         self._plan()
         self.stats["elapsed_sec"] = round(time.time() - t0, 2)
+        if CONFIG_INFO:
+            # 只在真加载了 config.json 时才多这一个键:没有配置文件时 JSON 与
+            # 引入覆盖层之前逐字节一致(smoke 里有负控制专门盯这件事)
+            self.stats["config"] = dict(CONFIG_INFO)
         print(
             f'扫描完成: {self.stats["files"]} 文件, '
             f'待归档 {self.stats["to_move"]} 个\n', file=sys.stderr,
@@ -917,7 +1041,9 @@ def main() -> None:
     scan_p.add_argument("--keep-dir", action="append", default=[],
                         metavar="GLOB",
                         help="白名单目录(可重复),命中的目录整体不动,如 "
-                             "--keep-dir '2024_官网改版' --keep-dir '成品*'")
+                             "--keep-dir '2024_官网改版' --keep-dir '成品*';"
+                             "每次都要重打的那几条可以写进本脚本同目录的 "
+                             "config.json(键 whitelist_dirs,语义完全相同)")
     scan_p.add_argument("--strict", action="store_true",
                         help="加查:已在别的类别目录里、但类别不符的文件"
                              "(默认不动,避免打散有意的结构)")
@@ -960,8 +1086,13 @@ def main() -> None:
             print(f"   可选: {', '.join(CATEGORY_ORDER)}", file=sys.stderr)
             raise SystemExit(1)
 
+    # 可选覆盖层:同目录 config.json。没有这个文件时下面这行什么都不做,
+    # CONFIG_WHITELIST 保持空列表,输出与引入覆盖层之前逐字节一致。
+    load_config()
+
     sorter = Sorter(args.root, args.max_depth, args.sample, args.layout,
-                    args.naming, args.dest, args.keep_dir, args.strict,
+                    args.naming, args.dest,
+                    args.keep_dir + CONFIG_WHITELIST, args.strict,
                     args.split_project_dirs, args.project_min_files,
                     args.stale_days, only_cats, args.max_issues)
     result = sorter.scan()

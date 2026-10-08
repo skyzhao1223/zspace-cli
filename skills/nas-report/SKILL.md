@@ -91,6 +91,58 @@ python3 nas_report.py diff /tmp/report-0901.json /tmp/report-0911.json --capacit
 
 阈值是启发式,`recommendations` 里带 `why` 说明触发原因。
 
+### 下游 skill 可以带一份 `config.json` 覆盖层(issue #15)
+
+路由过去之后要告诉用户的一件事:**file-sorter 和 photo-organizer 现在支持可选的
+`config.json`**,放在**脚本自己所在目录**(`zs skill` 装好后就是用户项目里的那份
+旁边),用来描述他库里的**故意例外** —— 一个 `原盘/VIDEO_TS` 树、随片留着的
+`.ass` 字幕、某个专业软件的私有扩展名。
+
+```jsonc
+// skills/file-sorter/config.json
+{
+  "whitelist_dirs": ["原盘", "samples"],          // 命中的目录整个子树不出搬家计划
+  "extension_overrides": {".rfa": "cad", "ass": "video"}
+}
+```
+
+| 谁支持 | 覆盖什么 |
+|--------|---------|
+| **file-sorter** | `whitelist_dirs`(追加到 `--keep-dir`)、`extension_overrides`(15 个类别名) |
+| **photo-organizer** | `whitelist_dirs`(追加到 `WHITELIST_DIRS`,整棵子树跳过)、`extension_overrides`(`photo`/`video`/`sidecar`/`junk`/`non_media`) |
+| 其余 skill | 暂不支持(见 PR 说明);机制是逐字复制的,可直接照搬 |
+| **nas-report(本 skill)** | **不支持**,见下 |
+
+**没有这个文件时,两个 skill 的行为与引入该机制之前逐字节一致**(不多一个 JSON
+字段),所以路由过去之前不需要先问用户有没有配。
+
+路由时可以这样说:「你的 `原盘/VIDEO_TS` 是有意的结构,file-sorter 默认会把它
+报成待整理;在 `skills/file-sorter/config.json` 里加一条 `whitelist_dirs` 就不会了
+—— 具体写法见那份 SKILL.md 的『配置覆盖』。」
+
+两个键的完整语义、模式锚定规则(`原盘/*` 到底命中什么)、出错行为都写在**各自
+skill 的 SKILL.md** 里,别在这里复述:两个 skill 的 `whitelist_dirs` 效果**并不
+相同**(file-sorter 仍计入 `stats`、photo-organizer 整棵跳过),照抄会讲错。
+
+#### 为什么 nas-report 自己不接受 `config.json`
+
+不是漏了,是刻意的:
+
+1. **本 skill 不判合规**。它出的是存储画像(各类别体积、冷热分层、大文件榜)和
+   路由建议,没有「这个文件该不该在这儿」的判断可以被豁免 —— 而 `whitelist_dirs`
+   的语义正是「别报它」。
+2. **改类别表会静默改变路由结论**。`CATEGORIES`(扩展名 → 类别)直接决定
+   「照片 > 500 张 → photo-organizer」这类阈值触发。让用户覆盖它,等于让画像和
+   路由建议都建立在一套私有 taxonomy 上,而**下游那个专项 skill 用的是它自己的
+   表** —— 两边一旦不一致,nas-report 说「去跑 photo-organizer」而 photo-organizer
+   看到的类别分布完全不同,这比没有覆盖更难查。
+3. `CATEGORIES` 与 file-sorter 的 15 类**有意不一致**(file-sorter 从 `design` 里
+   分出 `cad`、从 `doc` 里分出 `ebook`、把 `iso`/`img` 归 `backup`),所以一份
+   「通用」的 `extension_overrides` 在两边本来就不是同一件事。
+
+要让画像的类别口径也跟着用户走,得先解决「nas-report 与专项 skill 共用一张类别表」
+这个更大的问题 —— 那是另一个 issue,不该夹在这里做。
+
 ## 工作流
 
 ### 场景 1:用户说"帮我看看 NAS 上都存了些啥 / 空间被什么占了"
@@ -146,6 +198,8 @@ python3 nas_report.py diff /tmp/report-0901.json /tmp/report-0911.json --capacit
 - 路由阈值写死,不按库总量自适应(小库可能一个建议都不触发)
 - 增长趋势要看**两份**快照:单次 report 只是当前切片,`diff OLD NEW` 才给差分与速率(快照留的是 top-N 榜单,文件级增减不是全库 diff;容量要 `--capacity-gb` 喂进去,快照里没有容量字段)
 - 类别靠扩展名,不改名的错扩展名会误分类
+- **本 skill 不接受 `config.json`**(见上「为什么 nas-report 自己不接受」):画像与路由的类别口径无法按用户覆盖。下游的 file-sorter / photo-organizer 支持,所以「画像说照片多、专项 skill 却按另一套类别判」这种口径不一致目前无法从配置层面消除
+- 路由阈值(20 个散文件 / 500 张照片 / 15% 影视占比…)是写死的常量,既不自适应库总量,也不接受覆盖
 
 ## 故障排查
 
