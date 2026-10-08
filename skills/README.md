@@ -60,7 +60,7 @@ pip install zspace-cli && zs skill ~/your-project/skills/
 
 ### Windows 用户：执行阶段要换命令
 
-**扫描阶段跨平台**——9 个整理 skill 的脚本都是纯 stdlib，只要 NAS 挂载成本地盘（`Z:\` 这样的映射盘）就能跑，`python xxx.py scan --root Z:\data` 即可。
+**扫描阶段跨平台**——9 个整理 skill 的脚本都是纯 stdlib，只要 NAS 挂载成本地盘（`Z:\` 这样的映射盘）就能跑，`python xxx.py scan --root Z:\data` 即可。（说明：脚本本身不依赖任何 POSIX 特性，但 CI 的 smoke 测试目前只在 ubuntu 上跑，**Windows 上的扫描尚未自动化验证**——见 `docs/CONTRIBUTION_IDEAS.md`。）
 
 **执行阶段**（Agent 按计划搬文件）各 SKILL.md 里的示例是 POSIX 的 `mv -n` / `mkdir -p`，PowerShell 里没有这两个命令。对照：
 

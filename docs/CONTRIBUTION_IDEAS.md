@@ -95,9 +95,20 @@ its `--keep-dir` whitelist (per-library, so it gets re-typed every run).
 (`New-Item` / `Move-Item` without `-Force` / `robocopy /MOV /XC /XN /XO`) and
 `skills/README.md` has the family-level table. The other 8 SKILL.md files still
 show only `mv -n` / `mkdir -p`, which do not exist in PowerShell — a Windows
-agent following them verbatim fails at the *execute* step (the read-only scan
-step is fine, it's pure stdlib). Copy the reference table into each
-`写操作通道` section. Docs-only, no code, one skill per PR is fine.
+agent following them verbatim fails at the *execute* step. Copy the reference
+table into each `写操作通道` section. Docs-only, no code, one skill per PR is fine.
+
+### 🟡 Run the skill smoke tests on Windows in CI
+The `skills` job is `runs-on: ubuntu-latest` only, and the `windows-latest`
+matrix entries run just `ruff check src tests` + `pytest`. So **no skill scanner
+has ever been executed on Windows in CI**, even though Windows is a first-class
+audience (极空间's client ships for it) and the scanners are advertised as
+cross-platform. windows-latest has git-bash, so `bash "$d/tests/smoke.sh"`
+should work — but audit the fixtures first: they lean on `mktemp -d /tmp/...`,
+`touch -t YYYYMMDDhhmm`, `seq`, `head -c /dev/urandom` and CJK filenames, and
+`/dev/urandom` in particular is not a given. Cheap version: add a
+`skills-windows` job for one skill (file-sorter) and expand once it is green.
+Until then, "扫描脚本跨平台" is a **design claim, not a tested one**.
 
 > ✅ Shipped since this list was written: `nas-report diff OLD.json NEW.json`
 > (growth by category/dir, new+vanished large files, rate & ETA) — was
