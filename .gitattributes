@@ -1,0 +1,44 @@
+# Line-ending policy.
+#
+# The repository had no .gitattributes, so line endings depended on whichever
+# editor a contributor used. skills/nas-report/nas_report.py arrived via #25 as
+# CRLF while the other eight scanners were LF; a later text-mode read/write then
+# silently converted all 609 lines, turning a 16-line change into a +604/-588
+# whole-file diff. Normalizing in git makes that class of noise impossible.
+
+# Store LF in the repository for anything git detects as text.
+* text=auto
+
+# Check out as LF too. CI runs every skills/*/tests/smoke.sh through bash on
+# ubuntu and windows runners, where a CRLF line break breaks the script, and the
+# package is built from these files on Linux.
+*.py    text eol=lf
+*.pyi   text eol=lf
+*.sh    text eol=lf
+*.bash  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.toml  text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.cfg   text eol=lf
+*.ini   text eol=lf
+Dockerfile text eol=lf
+LICENSE    text eol=lf
+
+# Windows-only script types, should any be added later.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# Binary assets — never normalize.
+*.png   binary
+*.gif   binary
+*.jpg   binary
+*.jpeg  binary
+*.webp  binary
+*.ico   binary
+*.gz    binary
+*.whl   binary
+*.pdf   binary
