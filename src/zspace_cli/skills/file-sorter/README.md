@@ -94,7 +94,7 @@ issue(带 `files` / `categories` / `sample`),`action=review`。
   两个理由:① 避免几千个同名文件时的 O(n²) 试探;② `x__4999.jpg` 这种计划
   对用户毫无价值,命名规则该由人定
 
-## 四个会咬人的边界情况(都已处理 + 有回归测试)
+## 五个会咬人的边界情况(都已处理 + 有回归测试)
 
 | 情况 | 不处理会怎样 | 现在的行为 |
 |------|--------------|-----------|
@@ -102,6 +102,7 @@ issue(带 `files` / `categories` / `sample`),`action=review`。
 | **目标目录被同名文件占着**:根目录有个无扩展名文件叫 `图纸`,同时 `平面.dwg` 要搬进 `图纸/` | `mkdir 图纸` 直接 `File exists`,整批执行中断在半路 | 目标的每一级都与现存文件路径比对,命中则 `action=review` + `confidence=low` + 说明「先把那个文件移走(它自己也在本计划里)」;`stats.dir_file_conflicts` 计数 |
 | **`--root` 本身就是类别目录**:`--root /Volumes/nas/图纸` | 计划把里面的 dwg 搬进 `图纸/图纸/`,在自己的图纸库里再套一层 | root 的 basename 若能映射到类别,就当作所有文件的**隐含祖先** → 同类文件视为已就位。`stats.root_category` 记录 |
 | **繁体目录名**:`圖紙/` `文檔/` `視頻/` | 认不出来 → 给繁体用户**另建一套简体类别目录**,等于凭空造出重复分类(本 skill 最该避免的事) | 别名表简繁都收,`_DIR_TO_CAT` 从 100 → **135** 条 |
+| **文件名对 shell 不友好**:`-f.pdf`、`--force.jpg`、`price$100.xlsx` | Agent 是**照着 `target` 拼命令**执行的。实测 `mv -n "-f.pdf" 文档/` → `mv: illegal option -- .`,整条失败;`-i` 会让 mv 变交互式(非交互 Agent 里挂住);`$`/反引号即使加了双引号也会被 shell 展开 | `shell_risk()` 检出后在 `problems` 里给出**具体写法**(POSIX 加 `./` 前缀或 `--` 分隔;PowerShell 用 `-LiteralPath`),`target` 照常给出。`stats.shell_unsafe_names` 计数。含空格/中文的正常名字**不报**(双引号就够,报多了会被忽略) |
 
 探测大小写敏感性**不写任何探针文件**(脚本必须只读):拿一个已存在的文件把名字
 `swapcase()` 后 `os.path.exists()` —— 不敏感的文件系统会解析回原文件返回 True,
@@ -194,6 +195,7 @@ rm -rf "$W"
     "move_bytes", "junk_bytes", "kept_bytes",
     "dup_suspects", "dup_suspect_bytes", "conflicts",
     "dir_file_conflicts",                                 // 目标目录被同名文件占着
+    "shell_unsafe_names",                                 // 文件名对 shell 不友好
     "stale_files",
     "case_insensitive_fs",                                // 探测结果:撞名是否折叠大小写
     "root_category",                                      // --root 自身是类别目录时为该类

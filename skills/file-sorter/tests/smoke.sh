@@ -146,7 +146,23 @@ assert _fake._blocked_by_file("图纸/2024/平面.dwg", {"图纸/2024"}) == "图
 assert _fake._blocked_by_file("图纸/平面.dwg", {"文档"}) is None
 assert _fake._blocked_by_file("图纸/平面.dwg", set()) is None
 
-print("  ✓ 纯函数用例通过(含繁体别名 / 大小写归一 / 目录撞文件)")
+# --- shell 不友好的文件名(计划会被 Agent 拼成命令执行,必须警告)
+assert fs.shell_risk("-f.pdf") is not None and "- 开头" in fs.shell_risk("-f.pdf")
+assert fs.shell_risk("--force.jpg") is not None
+assert fs.shell_risk("-i.dwg") is not None
+for bad, why in (('a"b.pdf', "双引号"), ("a`b.pdf", "反引号"), ("a$b.pdf", "$"),
+                 ("a\\b.pdf", "反斜杠"), ("a\nb.pdf", "换行")):
+    r = fs.shell_risk(bad)
+    assert r is not None, bad
+    assert why in r, (bad, r)
+# 正常名字(含空格与中文)不该误报 —— 空格用双引号就够了,报多了会被忽略
+assert fs.shell_risk("with space.pdf") is None
+assert fs.shell_risk("正常文件.dwg") is None
+assert fs.shell_risk("IMG_0001.jpg") is None
+assert fs.shell_risk("a-b.pdf") is None          # 中间的 - 不是选项
+assert fs.shell_risk("") is None
+
+print("  ✓ 纯函数用例通过(含繁体别名 / 大小写归一 / 目录撞文件 / shell 危险名)")
 PYEOF
 
 echo "=== TEST 4: fixture 端到端 scan(乱目录 + 合规库零误报) ==="
@@ -224,6 +240,14 @@ printf 'a' > "$TRAD/圖紙/平面.dwg"
 printf 'b' > "$TRAD/文檔/合同.pdf"
 printf 'c' > "$TRAD/視頻/宣传.mp4"
 
+# --- shell 不友好的文件名(- 开头 / 含 $ 与引号):计划必须带警告
+RISK="$FIXTURE/risky"
+mkdir -p "$RISK"
+printf 'x' > "$RISK/-f.pdf"
+printf 'x' > "$RISK/--force.jpg"
+printf 'x' > "$RISK/price\$100.xlsx"
+printf 'x' > "$RISK/正常.dwg"        # 对照组:不该被警告
+
 # --- 大小写撞名(X.jpg / x.jpg 在 macOS+Windows 上是同一路径)
 CASE="$FIXTURE/casefold"
 mkdir -p "$CASE/a" "$CASE/b"
@@ -232,6 +256,7 @@ printf 'yyy' > "$CASE/b/x.jpg"
 
 FS_SKILL_DIR="$SKILL_DIR" FIX_ROOT="$ROOT" FIX_LIB="$LIB" FIX_COLL="$FIXTURE/collide" \
   FIX_BLOCK="$BLOCK" FIX_ROOTCAT="$ROOTCAT/图纸" FIX_TRAD="$TRAD" FIX_CASE="$CASE" \
+  FIX_RISK="$RISK" \
   "$PY" - <<'PYEOF'
 import json
 import os
@@ -480,6 +505,22 @@ else:
     assert cf["stats"]["conflicts"] == 0, cf["stats"]
     assert cf["stats"]["to_move"] == 2, cf["stats"]
 print(f"  ✓ 大小写撞名按文件系统实况判定(本机 case_insensitive={ci})")
+
+# -- shell 不友好的文件名:仍给 target,但必须带警告(否则 Agent 拼出的命令会失败)
+rk = run(target_root=os.environ["FIX_RISK"])
+rkp = {i["path"]: i for i in rk["issues"] if not i.get("is_dir")}
+assert rk["stats"]["shell_unsafe_names"] == 3, rk["stats"]["shell_unsafe_names"]
+for bad in ("-f.pdf", "--force.jpg", "price$100.xlsx"):
+    assert bad in rkp, sorted(rkp)
+    assert any("不能直接拼进命令" in x for x in rkp[bad]["problems"]), rkp[bad]
+    assert rkp[bad]["target"], bad          # 仍给目标路径,只是附警告
+assert "- 开头" in " ".join(rkp["-f.pdf"]["problems"])
+assert "变量展开" in " ".join(rkp["price$100.xlsx"]["problems"])
+# 对照组:正常名字不该被警告
+assert not any("shell" in x or "拼进命令" in x for x in rkp["正常.dwg"]["problems"]), \
+    rkp["正常.dwg"]
+assert rkp["正常.dwg"]["action"] == "move"
+print("  ✓ shell 危险文件名:带警告且不误伤正常名字(含空格/中文)")
 
 # -- 合规库:零误报
 ok = run(target_root=lib)
