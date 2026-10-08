@@ -79,6 +79,22 @@ the NAS's Vue app; upload/task logic lives in lazy chunks (search
 
 ## Skills family
 
+### 🟡 Port file-sorter's execution-safety checks to the other 8 skills
+`file-sorter` now detects three ways a plan can fail at *execute* time:
+`shell_risk()` (names starting with `-`, or containing `` " `` `` ` `` `$` `\`
+newline), `_blocked_by_file()` (a target directory occupied by a same-named
+file) and `_probe_case_fold()` (case-only collisions, which make the second
+`mv -n` silently no-op on APFS/NTFS). The other 8 skills emit `old → new`
+plans too and detect none of it — `photo-organizer` is the most exposed since
+it proposes `YYYY/YYYY-MM/` targets for large camera dumps, exactly where
+`IMG_1234.JPG` next to `img_1234.jpg` shows up.
+
+These are ~40 lines each and copy cleanly; the pure functions are already unit
+tested in `file-sorter`'s smoke.sh, so porting is mostly wiring plus one
+fixture per skill. One skill per PR is fine. Family-level guidance already
+exists in `skills/README.md` → 「执行阶段的两个坑」, so a skill that hasn't
+been ported yet is at least documented.
+
 ### 🟡 Per-skill config overrides — roadmap
 Whitelist dirs / extension sets via a `skills/<name>/config.json` overlay so
 scanners stop flagging intentional structures. Two concrete consumers today:

@@ -80,6 +80,17 @@ skills/<name>/
    PowerShell, so give the `Move-Item` (no `-Force` = no clobber) / `New-Item` /
    `robocopy /MOV /XC /XN /XO` equivalents, or point at `zs mv`. See
    `skills/file-sorter/SKILL.md` → 写操作通道 for the reference table.
+
+   **The plan must be executable as written.** Read-only scanning can't hurt
+   anyone, so it is tempting to treat the emitted paths as inert data — but the
+   agent turns them straight into shell commands, which makes an unexecutable
+   plan a real defect. Three concrete cases that shipped before being caught:
+   a target directory occupied by a same-named *file* (`mkdir` fails mid-batch),
+   a name beginning with `-` (`mv -n "-f.pdf" …` → `illegal option`), and
+   case-only collisions on APFS/NTFS where the second `mv -n` silently no-ops.
+   Detect what you can and downgrade those items to `review` with the fix
+   spelled out; `file-sorter` has `shell_risk()`, `_blocked_by_file()` and
+   `_probe_case_fold()` as reference implementations.
 2. **Pure stdlib, Python ≥ 3.9.** `from __future__ import annotations`; zero
    third-party imports — users run these from a copied folder with whatever
    `python3` they have.

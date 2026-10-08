@@ -65,7 +65,15 @@ jobs:
           # but nothing ever updated the file in the repo, and it had drifted to
           # 0.1.7 while 0.1.9 was what shipped. Syncing here means the release
           # commit carries it and it can never drift again.
-          VER="$VER" python - <<'EOF'
+          #
+          # This runs AFTER the PyPI publish, inside the step that cuts the tag.
+          # `run:` defaults to `bash -e`, so an exception here would abort before
+          # `git tag` — leaving a published version with no tag, no GitHub
+          # Release and no MCP Registry publish, which is exactly the failure the
+          # ordering comment below warns about. The sync is cosmetic (the registry
+          # derives its own version from the tag), so it must never be able to
+          # block the tag: `|| echo ::warning::` and carry on.
+          VER="$VER" python - <<'EOF' || echo "::warning::server.json sync failed; tagging anyway (the registry derives its version from the tag, so only the committed file stays stale)"
           import json, os, pathlib
           ver = os.environ["VER"]
           p = pathlib.Path("server.json")

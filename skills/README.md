@@ -75,6 +75,34 @@ pip install zspace-cli && zs skill ~/your-project/skills/
 
 > 极空间用户在 Windows 上更省事：直接用 `zs mv` / `zs mkdir`（走 API，不依赖映射盘和 shell 转义）。注意 `zs` 的**零配置登录态读取**在 macOS 上最稳，Windows/Linux 是尽力支持（见 [issue #7](https://github.com/skyzhao1223/zspace-cli/issues/7)）；整理 skill 本身不需要登录态。
 
+### 执行阶段的两个坑（所有 skill 通用，Agent 务必注意）
+
+扫描是只读的、不会出错；**风险全在"照着计划拼命令执行"这一步**。这两条对 9 个 skill 都适用：
+
+**1. 文件名对 shell 不友好。** 以 `-` 开头的名字会被当成命令选项：
+
+```console
+$ mv -n "-f.pdf" 文档/
+mv: illegal option -- .
+```
+
+`-i` 更隐蔽（让 `mv` 变交互式，非交互的 Agent 里会挂住）；含 `$` 或反引号的名字**即使加了双引号也会被 shell 展开**。正确写法：
+
+| 平台 | 写法 |
+|------|------|
+| POSIX | `mv -n -- "-f.pdf" 文档/` 或 `mv -n "./-f.pdf" 文档/` |
+| PowerShell | `Move-Item -LiteralPath "Z:\data\-f.pdf" -Destination "Z:\data\文档\"` |
+
+`file-sorter` 会主动检出这类名字（`stats.shell_unsafe_names`，并在 `problems` 里给出上面这两种写法）；**其余 skill 目前不检**，所以 Agent 拿到任何 `old → new` 计划都该先扫一眼有没有 `-` 开头或含 `$` `` ` `` `"` `\` 的名字。（空格和中文**不算**——双引号就够了。）
+
+**2. 只有大小写不同的同名文件。** macOS（APFS）和 Windows（NTFS）默认**大小写不敏感**，`图片/X.jpg` 与 `图片/x.jpg` 是**同一个路径**：
+
+```console
+$ mv -n a/X.jpg 图片/ && mv -n b/x.jpg 图片/     # 第二条静默什么都不做
+```
+
+`mv -n` 不覆盖，于是第二个文件**留在原地**，而计划看起来执行成功了——不报错，所以最容易漏。`file-sorter` 会探测文件系统并把这种情况判为撞名（自动改名 `x__2.jpg` + 降级人工确认，见 `stats.case_insensitive_fs`）；只给"建议目录"不给完整目标路径的 skill（如 photo-organizer 给 `2024/2024-05/`）检测不到，需要 Agent 自己在搬之前比一下同目录内是否已有只差大小写的名字。
+
 ## Skill 清单
 
 **先跑 [nas-report](nas-report/SKILL.md) 看清全局，它会告诉你该用哪个专项 skill。**
