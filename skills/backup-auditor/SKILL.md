@@ -94,6 +94,14 @@ python3 backup_auditor.py coverage --source /Volumes/nas/data --backup /Volumes/
    mv -n "/Volumes/nas/备份/照片备份_2023-01-01.tar.gz" "/Volumes/nas/备份/_rotated/"
    ```
    归档一段时间确认无需回溯,再统一删;极空间也可走 `zs mv` / `zs rm`
+
+   **Windows(PowerShell)**:没有 `mkdir -p` / `mv -n`,等价写法——
+   ```powershell
+   New-Item -ItemType Directory -Force -Path "Z:\备份\_rotated" | Out-Null
+   Move-Item "Z:\备份\照片备份_2023-01-01.tar.gz" "Z:\备份\_rotated\"   # 不加 -Force = 不覆盖
+   ```
+   中文路径先 `chcp 65001`;完整对照见 [skills/README.md](../README.md) 的
+   「Windows 用户:执行阶段要换命令」。极空间用户直接用 `zs mv` 可绕开 shell 差异。
 4. **删旧备份前必须确认最新版本完好** — 别把唯一可用备份轮转掉
 
 ### 场景 3:用户说"关键目录都备份了吗"
