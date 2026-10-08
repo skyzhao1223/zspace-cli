@@ -122,26 +122,36 @@ CATEGORY_EN = {
 }
 # 已存在的目录名 → 类别(命中即视为「已就位」,不产生搬家计划)
 # 保守取向:宁可不认(多提几条建议),也不认错(把项目目录当类别目录)
+# 简繁都收:繁体库(圖紙/文檔/視頻…)若认不出来,会给用户另建一个简体类别目录,
+# 等于凭空造出重复分类 —— 这正是本 skill 最该避免的事
 DIR_ALIASES: dict[str, set[str]] = {
-    "doc": {"文档", "文件资料", "资料", "办公文档", "doc", "docs", "document",
-            "documents", "office", "pdf"},
-    "cad": {"图纸", "cad", "cad图纸", "工程图", "施工图", "机械图纸", "drawing",
+    "doc": {"文档", "文檔", "文件资料", "資料", "资料", "办公文档", "辦公文檔",
+            "doc", "docs", "document", "documents", "office", "pdf"},
+    "cad": {"图纸", "圖紙", "cad", "cad图纸", "cad圖紙", "工程图", "工程圖",
+            "施工图", "施工圖", "机械图纸", "機械圖紙", "drawing",
             "drawings", "3d", "模型"},
-    "design": {"设计", "设计源文件", "源文件", "工程文件", "design", "source",
-               "sources", "psd", "工程"},
-    "image": {"图片", "图像", "照片", "截图", "image", "images", "photo",
-              "photos", "picture", "pictures", "img"},
-    "video": {"视频", "影视", "影片", "video", "videos", "movie", "movies"},
-    "audio": {"音频", "音乐", "audio", "music", "song", "songs"},
-    "ebook": {"电子书", "书籍", "ebook", "ebooks", "book", "books"},
-    "archive": {"压缩包", "归档包", "archive", "archives", "zip"},
-    "installer": {"安装包", "安装程序", "installer", "installers", "setup"},
-    "font": {"字体", "fonts", "font"},
-    "code": {"代码", "脚本", "code", "src", "script", "scripts"},
-    "backup": {"备份", "镜像", "备份镜像", "backup", "backups"},
-    "torrent": {"种子", "torrent", "torrents"},
-    "junk": {"垃圾", "临时", "临时文件", "junk", "temp", "tmp", "trash"},
-    "other": {"待分类", "未分类", "其他", "杂项", "unsorted", "misc"},
+    "design": {"设计", "設計", "设计源文件", "設計源文件", "源文件", "工程文件",
+               "design", "source", "sources", "psd", "工程"},
+    "image": {"图片", "圖片", "图像", "圖像", "照片", "截图", "截圖", "image",
+              "images", "photo", "photos", "picture", "pictures", "img"},
+    "video": {"视频", "視頻", "影视", "影視", "影片", "video", "videos",
+              "movie", "movies"},
+    "audio": {"音频", "音頻", "音乐", "音樂", "audio", "music", "song", "songs"},
+    "ebook": {"电子书", "電子書", "书籍", "書籍", "ebook", "ebooks", "book",
+              "books"},
+    "archive": {"压缩包", "壓縮包", "归档包", "歸檔包", "archive", "archives",
+                "zip"},
+    "installer": {"安装包", "安裝包", "安装程序", "安裝程式", "installer",
+                  "installers", "setup"},
+    "font": {"字体", "字體", "fonts", "font"},
+    "code": {"代码", "代碼", "脚本", "腳本", "code", "src", "script", "scripts"},
+    "backup": {"备份", "備份", "镜像", "鏡像", "备份镜像", "備份鏡像",
+               "backup", "backups"},
+    "torrent": {"种子", "種子", "torrent", "torrents"},
+    "junk": {"垃圾", "临时", "臨時", "临时文件", "臨時檔案", "junk", "temp",
+             "tmp", "trash"},
+    "other": {"待分类", "待分類", "未分类", "未分類", "其他", "杂项", "雜項",
+              "unsorted", "misc"},
 }
 # 目录名(小写) → 类别;类别自己的中英文名也算
 _DIR_TO_CAT: dict[str, str] = {}
@@ -262,6 +272,10 @@ class Sorter:
         self.stale_days = stale_days
         self.only_cats = only_cats
         self.max_issues = max_issues
+        # --root 本身可能就是一个类别目录(如 --root /Volumes/nas/图纸)。
+        # 这时把它当作所有文件的隐含祖先,否则计划会让人在自己的图纸库里
+        # 再建一层 图纸/图纸/。
+        self.root_cat = _DIR_TO_CAT.get(self.root.name.lower())
         self.errors: list[dict] = []
         self._files: list[FileRec] = []
         self._sizes: list[tuple[int, str]] = []
@@ -274,7 +288,7 @@ class Sorter:
             "to_move": 0, "to_delete": 0, "to_review": 0,
             "move_bytes": 0, "junk_bytes": 0, "kept_bytes": 0,
             "dup_suspects": 0, "dup_suspect_bytes": 0,
-            "conflicts": 0, "stale_files": 0,
+            "conflicts": 0, "dir_file_conflicts": 0, "stale_files": 0,
             "filtered_out": 0, "omitted_issues": 0, "issues_truncated": False,
             "target_dirs": {}, "unknown_exts": {}, "largest": [],
             "layout": layout, "naming": naming, "dest": dest,
@@ -284,8 +298,34 @@ class Sorter:
             "sampled_out": False, "elapsed_sec": 0.0,
         }
         self.issues: list[dict] = []
+        self._ci: bool | None = None      # 目标文件系统是否大小写不敏感(扫描后探测)
 
     # -- 判定 -----------------------------------------------------------
+
+    def _norm(self, path: str) -> str:
+        """撞名判定用的归一化键:大小写不敏感的文件系统上要折叠大小写。"""
+        return path.lower() if self._ci else path
+
+    def _probe_case_fold(self) -> bool:
+        """探测目标文件系统是否大小写不敏感(macOS APFS / Windows NTFS 默认是)。
+
+        **只读**:拿一个已存在的文件,把名字大小写翻转后 `os.path.exists()`。
+        不敏感的文件系统上它会解析回原文件 → True;敏感的则查无此文件 → False。
+        翻转名恰好也在扫描集合里时判不了,跳过换一个;全判不了就退回平台默认。
+        """
+        known = {f.rel for f in self._files}
+        for f in self._files[:500]:
+            swapped = f.name.swapcase()
+            if swapped == f.name:
+                continue                       # 纯中文/纯数字名,翻不动
+            rel = f"{ '/'.join(f.parts)}/{swapped}" if f.parts else swapped
+            if rel in known:
+                continue                       # 真有大小写不同的同名文件,判不了
+            try:
+                return os.path.exists(str(self.root / rel))
+            except OSError:
+                continue
+        return sys.platform in ("darwin", "win32")
 
     def _protected(self, parts: list[str]) -> bool:
         """命中 --keep-dir 白名单(匹配任一层目录名或整段相对路径)。"""
@@ -304,7 +344,8 @@ class Sorter:
         """该文件的处置:protected / compliant / nested / candidate。"""
         if f.protected:
             return "protected"
-        anc = ancestor_cat(list(f.parts))
+        # root 自己就是类别目录时,它算所有文件的隐含祖先
+        anc = ancestor_cat(list(f.parts)) or self.root_cat
         if anc == f.cat:
             return "compliant"
         if anc is not None and not self.strict:
@@ -406,25 +447,48 @@ class Sorter:
         撞名超过 MAX_RENAME_TRIES 次(几千个同名文件的库)就**不再自动编号**,
         返回 target=None 交人工/LLM 命名 —— 既避免 O(n²) 试探,也避免生成
         几千条 `x__4999.jpg` 这种没意义的计划。
+
+        occupied 里存的是 _norm() 归一化后的键:大小写不敏感的文件系统
+        (macOS APFS / Windows NTFS 默认)上 `X.jpg` 与 `x.jpg` 是同一个路径,
+        不归一就会漏判撞名,执行时 `mv -n` 静默不搬。
         """
         parts = target_parts(f.cat, self.layout, f.mtime or None, self.naming)
         if self.dest:
             parts = [self.dest, *parts]
         base = "/".join(parts)
         cand = f"{base}/{f.name}"
-        if cand not in occupied:
+        if self._norm(cand) not in occupied:
             return cand, None
         stem, dot_ext = os.path.splitext(f.name)
         for n in range(2, MAX_RENAME_TRIES + 2):
             cand = f"{base}/{stem}__{n}{dot_ext}"
-            if cand not in occupied:
+            if self._norm(cand) not in occupied:
                 return cand, f"{base}/{f.name}"
         return None, f"{base}/{f.name}"
+
+    def _blocked_by_file(self, target: str, file_keys: set[str]) -> str | None:
+        """目标路径的某一级目录与现存**文件**同名 → mkdir 会失败。
+
+        例:根目录有个无扩展名的文件叫 `图纸`,同时 `平面.dwg` 要搬进 `图纸/`。
+        这种计划按原样执行不下去(File exists),必须提前报出来。
+        """
+        parts = target.split("/")[:-1]
+        for i in range(1, len(parts) + 1):
+            key = self._norm("/".join(parts[:i]))
+            if key in file_keys:
+                return "/".join(parts[:i])
+        return None
 
     def _plan(self) -> None:
         s = self.stats
         now = datetime.now().timestamp()
-        occupied = {f.rel for f in self._files}
+        self._ci = self._probe_case_fold()
+        s["case_insensitive_fs"] = bool(self._ci)
+        s["root_category"] = self.root_cat
+        # occupied / file_keys 用归一化键:大小写不敏感的文件系统上
+        # X.jpg 与 x.jpg 是同一路径,不归一会漏判撞名(mv -n 会静默不搬)
+        occupied = {self._norm(f.rel) for f in self._files}
+        file_keys = set(occupied)
         disp = {f.rel: self._disposition(f) for f in self._files}
         projects = self._project_dirs(
             [f for f in self._files if disp[f.rel] == "candidate"])
@@ -501,7 +565,17 @@ class Sorter:
             else:
                 target, conflict_with = self._target(f, occupied)
                 if target:
-                    occupied.add(target)
+                    occupied.add(self._norm(target))
+                    blocked = self._blocked_by_file(target, file_keys)
+                    if blocked:
+                        # 目标目录名被一个现存**文件**占着,mkdir 会 File exists
+                        s["dir_file_conflicts"] += 1
+                        action = "review"
+                        confidence = "low"
+                        problems.append(
+                            f"目标目录「{blocked}/」被一个同名**文件**占着,"
+                            "mkdir 会失败;先把那个文件移走(它自己也在本计划里)"
+                            "或改用 --dest 换个归档根")
                 if anc is not None and self.strict:
                     problems.append(
                         f"已在「{CATEGORY_ZH[anc]}」目录里但本文件属于"
@@ -676,6 +750,15 @@ def _print_human(result: dict, top: int) -> None:
     print(f"散在根目录 {s['root_files']} | 疑似项目目录 {s['project_dirs']} "
           f"| 疑似副本 {s['dup_suspects']} | 重名冲突 {s['conflicts']} "
           f"| 久未动 {s['stale_files']}")
+    if s.get("root_category"):
+        print(f"└ --root 本身就是「{CATEGORY_ZH[s['root_category']]}」目录,"
+              "里面的同类文件视为已就位(不会再套一层同名目录)")
+    if s.get("dir_file_conflicts"):
+        print(f"└ ⚠ {s['dir_file_conflicts']} 个目标目录被同名**文件**占着,"
+              "mkdir 会失败 —— 已降级为人工确认,别照原计划直接执行")
+    if s.get("case_insensitive_fs"):
+        print("└ 文件系统大小写不敏感(macOS/Windows),撞名判定已按此折叠;"
+              "X.jpg 与 x.jpg 视为同一路径")
     if s["dup_suspects"]:
         # 顺序建议给数据,不给绝对规则:去重与分类谁先都不影响正确性
         # (dedup-finder 是内容级的、与目录结构无关),差的只是白搬多少字节。
