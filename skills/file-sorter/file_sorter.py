@@ -168,6 +168,33 @@ DUP_MARK_RE = re.compile(
     re.I,
 )
 
+# 文件名里会让 shell 命令变味儿的字符。Agent 是**照着 target 拼命令**执行的,
+# 所以这类名字必须显式警告,否则计划看起来正常、执行时却失败或改变语义。
+SHELL_RISKY_CHARS = (
+    ('"', "含双引号,会破坏双引号包裹"),
+    ("`", "含反引号,shell 会做命令替换"),
+    ("$", "含 $,双引号内仍会变量展开"),
+    ("\\", "含反斜杠,转义会被吃掉"),
+    ("\n", "含换行,会把一条命令截成两条"),
+    ("\r", "含回车,会把一条命令截断"),
+)
+
+
+def shell_risk(name: str) -> str | None:
+    """纯函数:文件名在 shell 命令里是否会被当选项 / 破坏引号。返回原因或 None。
+
+    实测:`mv -n "-f.pdf" 文档/` → `mv: illegal option -- .`,整条命令失败。
+    更隐蔽的是 `-i`(让 mv 变交互式,在非交互 Agent 里挂住或静默跳过)和
+    `-f`(可能盖掉 `-n` 的不覆盖语义)。含 `$`/反引号 的名字即使加了双引号
+    也会被 shell 展开。
+    """
+    if name.startswith("-"):
+        return "以 - 开头,会被 mv/Move-Item 当成命令选项"
+    for ch, why in SHELL_RISKY_CHARS:
+        if ch in name:
+            return why
+    return None
+
 
 def categorize(name: str, ext: str) -> str:
     """纯函数:按文件名/扩展名归类。junk 优先,未识别 → other。"""
@@ -288,7 +315,8 @@ class Sorter:
             "to_move": 0, "to_delete": 0, "to_review": 0,
             "move_bytes": 0, "junk_bytes": 0, "kept_bytes": 0,
             "dup_suspects": 0, "dup_suspect_bytes": 0,
-            "conflicts": 0, "dir_file_conflicts": 0, "stale_files": 0,
+            "conflicts": 0, "dir_file_conflicts": 0,
+            "shell_unsafe_names": 0, "stale_files": 0,
             "filtered_out": 0, "omitted_issues": 0, "issues_truncated": False,
             "target_dirs": {}, "unknown_exts": {}, "largest": [],
             "layout": layout, "naming": naming, "dest": dest,
@@ -622,6 +650,14 @@ class Sorter:
                             f"疑似副本(名字带副本/(1) 标记,且与 {ref} 同大小)"
                             "— 是否真重复要 dedup-finder 做内容级确认;先删重复能省掉"
                             "搬这些字节,但先分类也不会漏检(dedup 与目录结构无关)")
+                # 文件名对 shell 不友好 → 计划看着正常,执行时会失败或变语义
+                risk = shell_risk(f.name)
+                if risk:
+                    s["shell_unsafe_names"] += 1
+                    problems.append(
+                        f"⚠ 文件名{risk};Agent 执行时不能直接拼进命令 —— "
+                        f"POSIX 写 ./{f.name} 或加 -- 分隔,"
+                        "PowerShell 用 -LiteralPath")
                 if action == "move":
                     s["to_move"] += 1
                     s["move_bytes"] += f.size
@@ -756,6 +792,10 @@ def _print_human(result: dict, top: int) -> None:
     if s.get("dir_file_conflicts"):
         print(f"└ ⚠ {s['dir_file_conflicts']} 个目标目录被同名**文件**占着,"
               "mkdir 会失败 —— 已降级为人工确认,别照原计划直接执行")
+    if s.get("shell_unsafe_names"):
+        print(f"└ ⚠ {s['shell_unsafe_names']} 个文件名对 shell 不友好"
+              "(- 开头 / 含 \" ` $ \\ 或换行):执行时不能直接拼进命令,"
+              "POSIX 加 ./ 前缀或 --,PowerShell 用 -LiteralPath")
     if s.get("case_insensitive_fs"):
         print("└ 文件系统大小写不敏感(macOS/Windows),撞名判定已按此折叠;"
               "X.jpg 与 x.jpg 视为同一路径")

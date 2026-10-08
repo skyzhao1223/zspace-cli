@@ -272,6 +272,7 @@ robocopy "Z:\data" "Z:\data\图纸" *.dwg *.dxf *.step /MOV /XC /XN /XO /NJH /NJ
 | 无扩展名文件 | `README`、`LICENSE`、导出脚本 → 待分类 | 逐条确认;常见的可手工指定去向 |
 | SMB 上扫描慢 | 大库 stat 耗时 | `--sample` 摸底;`--max-depth` 限制层数;分类只 stat 不读内容,比去重快得多 |
 | 中文目录名 + shell | `mv 图纸/x.dwg` 引号/转义问题 | 路径一律加双引号;极空间走 `zs mv` 可避开 shell 转义 |
+| **文件名以 `-` 开头或含 `` ` `` `$` `"` `\` 换行** | `mv -n "-f.pdf" 文档/` → `mv: illegal option -- .`;`-i` 会让 mv 变交互式卡住;`$`/反引号在双引号内**仍会被展开** | 脚本已在 `problems` 里标出并给写法:POSIX 用 `mv -n -- "-f.pdf"` 或 `./-f.pdf`,PowerShell 用 `Move-Item -LiteralPath`;`stats.shell_unsafe_names` 计数 |
 
 ## 已知 gap
 
