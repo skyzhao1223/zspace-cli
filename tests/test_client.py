@@ -698,6 +698,143 @@ def test_upload_over_threshold_uses_slices(creds, tmp_path):
     assert b"".join(bodies) == b"0123456789"
 
 
+def test_upload_resumes_from_tmpinfo(creds, tmp_path):
+    """A partial session reported by tmpinfo skips the already-accepted bytes."""
+    c = ZSpaceClient(credentials=creds, slice_threshold=0, slice_size=4)
+    c._http = MagicMock()
+    c._http.post.return_value = _resp_mock("200", {})
+    c._http.get.return_value = _resp_mock("200", {"size": "4"})  # 4 of 10 already in
+    src = tmp_path / "f.bin"
+    src.write_bytes(b"0123456789")
+    seen: list = []
+    result = c.upload(src, "/dst", progress=lambda d, t: seen.append((d, t)))
+
+    assert c._http.post.call_count == 2
+    seeks = [int(x.kwargs["headers"]["seek"]) for x in c._http.post.call_args_list]
+    bodies = [x.kwargs["content"] for x in c._http.post.call_args_list]
+    assert seeks == [4, 8]
+    assert b"".join(bodies) == b"456789"
+    assert result["resumed_from"] == 4
+    # progress must start at the resumed offset, not rewind to 0
+    assert seen[0] == (4, 10)
+    # queried with the target path and the deterministic session uuid
+    args, kwargs = c._http.get.call_args
+    assert args[0] == "/v2/file/tmpinfo"
+    assert kwargs["params"]["path"] == "/dst/f.bin"
+    assert len(kwargs["params"]["uuid"]) == 32
+
+
+def test_upload_tmpinfo_unaligned_offset_is_honoured(creds, tmp_path):
+    """A reported size that is not a slice multiple still resumes exactly there."""
+    c = ZSpaceClient(credentials=creds, slice_threshold=0, slice_size=4)
+    c._http = MagicMock()
+    c._http.post.return_value = _resp_mock("200", {})
+    c._http.get.return_value = _resp_mock("200", {"size": "3"})
+    src = tmp_path / "f.bin"
+    src.write_bytes(b"0123456789")
+    result = c.upload(src, "/dst")
+
+    seeks = [int(x.kwargs["headers"]["seek"]) for x in c._http.post.call_args_list]
+    bodies = [x.kwargs["content"] for x in c._http.post.call_args_list]
+    assert seeks == [3, 7]
+    assert b"".join(bodies) == b"3456789"
+    assert result["resumed_from"] == 3
+
+
+def test_upload_no_tmpinfo_session_starts_from_zero(creds, tmp_path):
+    """N001315 (no temp entry) is the normal case and must not fail the upload."""
+    c = ZSpaceClient(credentials=creds, slice_threshold=0, slice_size=4)
+    c._http = MagicMock()
+    c._http.post.return_value = _resp_mock("200", {})
+    c._http.get.return_value = _resp_mock("N001315", None, msg="文件不存在")
+    src = tmp_path / "f.bin"
+    src.write_bytes(b"0123456789")
+    result = c.upload(src, "/dst")
+
+    assert c._http.post.call_count == 3
+    assert [int(x.kwargs["headers"]["seek"]) for x in c._http.post.call_args_list] == [0, 4, 8]
+    # unchanged shape: no resumed_from key when nothing was skipped
+    assert result == {"path": "/dst/f.bin", "name": "f.bin", "size": 10}
+
+
+def test_upload_resume_disabled_never_queries_tmpinfo(creds, tmp_path):
+    c = ZSpaceClient(credentials=creds, slice_threshold=0, slice_size=4)
+    c._http = MagicMock()
+    c._http.post.return_value = _resp_mock("200", {})
+    c._http.get.return_value = _resp_mock("200", {"size": "4"})
+    src = tmp_path / "f.bin"
+    src.write_bytes(b"0123456789")
+    result = c.upload(src, "/dst", resume=False)
+
+    assert c._http.get.call_count == 0
+    assert [int(x.kwargs["headers"]["seek"]) for x in c._http.post.call_args_list] == [0, 4, 8]
+    assert "resumed_from" not in result
+
+
+def test_upload_tmpinfo_size_at_total_resends_everything(creds, tmp_path):
+    """size >= total must NOT skip: the NAS assembles only when the last slice lands."""
+    c = ZSpaceClient(credentials=creds, slice_threshold=0, slice_size=4)
+    c._http = MagicMock()
+    c._http.post.return_value = _resp_mock("200", {})
+    c._http.get.return_value = _resp_mock("200", {"size": "10"})
+    src = tmp_path / "f.bin"
+    src.write_bytes(b"0123456789")
+    result = c.upload(src, "/dst")
+
+    assert c._http.post.call_count == 3
+    assert [int(x.kwargs["headers"]["seek"]) for x in c._http.post.call_args_list] == [0, 4, 8]
+    assert "resumed_from" not in result
+
+
+def test_upload_tmpinfo_malformed_size_is_ignored(creds, tmp_path):
+    c = ZSpaceClient(credentials=creds, slice_threshold=0, slice_size=4)
+    c._http = MagicMock()
+    c._http.post.return_value = _resp_mock("200", {})
+    c._http.get.return_value = _resp_mock("200", {"size": "not-a-number"})
+    src = tmp_path / "f.bin"
+    src.write_bytes(b"0123456789")
+    result = c.upload(src, "/dst")
+
+    assert c._http.post.call_count == 3
+    assert "resumed_from" not in result
+
+
+def test_upload_tmpinfo_null_size_is_ignored(creds, tmp_path):
+    """data.size missing/null must not reach int() — pyright-narrowed, and tested."""
+    c = ZSpaceClient(credentials=creds, slice_threshold=0, slice_size=4)
+    c._http = MagicMock()
+    c._http.post.return_value = _resp_mock("200", {})
+    c._http.get.return_value = _resp_mock("200", {"size": None})
+    src = tmp_path / "f.bin"
+    src.write_bytes(b"0123456789")
+    result = c.upload(src, "/dst")
+
+    assert c._http.post.call_count == 3
+    assert "resumed_from" not in result
+
+
+def test_upload_413_fallback_also_resumes(creds, tmp_path):
+    """The 413 -> sliced fallback must honour resume too, not just the >threshold path."""
+    import httpx as _httpx
+
+    c = ZSpaceClient(credentials=creds, slice_threshold=1 << 40, slice_size=4)
+    c._http = MagicMock()
+    req = _httpx.Request("POST", "http://proxy/v2/file/create")
+    err = _httpx.HTTPStatusError(
+        "413", request=req, response=_httpx.Response(413, request=req)
+    )
+    c._http.post.side_effect = [err, _resp_mock("200", {}), _resp_mock("200", {})]
+    c._http.get.return_value = _resp_mock("200", {"size": "4"})
+    src = tmp_path / "f.bin"
+    src.write_bytes(b"0123456789")
+    result = c.upload(src, "/dst")
+
+    seeks = [int(x.kwargs["headers"]["seek"]) for x in c._http.post.call_args_list
+             if isinstance(x.kwargs.get("headers"), dict) and "seek" in x.kwargs["headers"]]
+    assert seeks == [4, 8]
+    assert result["resumed_from"] == 4
+
+
 def test_upload_uuid_stable_across_slices(creds, tmp_path):
     c = ZSpaceClient(credentials=creds, slice_threshold=0, slice_size=4)
     c._http = MagicMock()

@@ -390,6 +390,10 @@ def up(
     remote_dir: str = typer.Argument(..., help="NAS 目标目录"),
     name: str = typer.Option(None, "--name", "-n", help="上传后的文件名（默认用本地文件名）"),
     verify: bool = typer.Option(False, "--verify", help="上传后下载并比较 MD5 完整性"),
+    resume: bool = typer.Option(
+        True, "--resume/--no-resume",
+        help="分片上传前先问 NAS 这个会话已收到多少字节并跳过（默认开）",
+    ),
 ):
     """上传本地文件到 NAS"""
     with _client() as c:
@@ -410,8 +414,15 @@ def up(
                         task, completed=done, total=total or None
                     ),
                     verify=verify,
+                    resume=resume,
                 )
                 target = result.get("path", f"{remote_dir.rstrip('/')}/{local.name}")
+                skipped = result.get("resumed_from")
+                if skipped:
+                    console.print(
+                        f"[cyan]↻[/cyan] 断点续传：跳过 NAS 已收到的 "
+                        f"[bold]{skipped / 1048576:.1f} MB[/bold]"
+                    )
                 console.print(f"[green]OK[/green] 已上传到 [bold]{target}[/bold]")
                 if verify:
                     console.print("[green]OK[/green] MD5 完整性校验通过")
