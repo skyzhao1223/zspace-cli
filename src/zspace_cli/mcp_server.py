@@ -517,6 +517,21 @@ async def zspace_usage(
     one of my / my_tm (Time Machine) / my_recycle / my_safe / sys_docker /
     sys_raid / sys_vm / sys_iscsi / sys_other. Read-only.
 
+    The `my_recycle` entry is the recycle bin's physical footprint, so this is
+    the cheap way to see how much space deleted-but-not-purged data is holding
+    before deciding whether to list or empty it. Also note these are *physical*
+    sizes: `my` includes the second copy of every double-backed-up folder,
+    whereas a file-level walk (zspace_du) reports logical sizes. The walk
+    therefore comes out lower by exactly the mirrored bytes -- measured on one
+    pool as 4.838 TiB walked vs 6.008 TiB reported here, the 1.17 TiB gap being
+    the double-written folder. Neither number is wrong; they measure different
+    things.
+
+    If you compare these figures against a scan run on an SMB mount, expect a
+    mismatch: the mount exposes "@Recycle" and other directories the file API
+    cannot see, and a mount-side scan that fails to skip "@Recycle" counts
+    recycled data as live. That inflates totals silently rather than erroring.
+
     For the size of one specific directory use zspace_du instead; for per-disk
     health use zspace_disks.
     """
@@ -580,6 +595,13 @@ async def zspace_du(
 
     walk=true traverses via /v2/file/list at roughly one request per directory;
     a 448k-file tree needs ~93k requests and ~12 minutes. Read-only.
+
+    Do not cross-check this against a `du` run on an SMB mount and assume one of
+    them is broken. The mount exposes directories the file API cannot see at all
+    -- notably "@Recycle", the same recycle bin that zspace_recycle_list reads
+    as "/.recycle/my" -- so a mount-side count includes recycled data this tool
+    correctly excludes. Mount-side scans must skip "@Recycle" (and
+    ".zspace_trash"); counting it inflates totals without raising any error.
 
     For whole-pool accounting use zspace_usage; to list individual large files
     use zspace_bigfiles.
@@ -737,6 +759,18 @@ async def zspace_recycle_list(
     {bin, total, items: [{name, path, original_path, is_dir, bytes}]}. The
     `path` is the in-bin location and is what zspace_recycle_restore and
     zspace_recycle_purge need. Read-only.
+
+    Naming: this tool reaches the bin through the API, where it is
+    "/.recycle/my". The same bin is visible on an SMB mount as a directory
+    called "@Recycle" at the share root (plus a ".zspace_trash" variant), which
+    is outside /<pool>/my/data and therefore not readable through the file API
+    at all. If you are also running scripts against a mounted path -- the
+    skills/ scanners do exactly that -- they must skip "@Recycle", or recycled
+    files get counted as live data. That miscount raises no error, it just
+    quietly inflates totals; it survived in 8 of the 9 scanners before being
+    caught. Do not try to list "@Recycle" through this API to cross-check: it
+    returns N001411 for every path outside my/data whether or not it exists, so
+    that response tells you nothing.
     """
     with ZSpaceClient() as c:
         target = c.RECYCLE_PUBLIC if public else c.RECYCLE_MY

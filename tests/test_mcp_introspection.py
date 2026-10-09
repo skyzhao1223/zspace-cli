@@ -271,3 +271,46 @@ def test_recycle_empty_public_flag():
     r, c = _call(m.zspace_recycle_empty, confirm=True, public=True)
     c.recycle_empty.assert_called_once_with(public=True)
     assert r["result"]["bin"] == "public"
+
+
+# ── docstring contracts ────────────────────────────────────────────────────
+#
+# These tools are read by agents, so the docstring IS the interface. The
+# @Recycle warning in particular prevents a silent over-count: an agent that
+# also runs mount-side scripts needs to know the bin it reads as /.recycle/my
+# is the same thing a mount exposes as @Recycle, and that skipping it is
+# mandatory. Pinned so the note cannot be trimmed away as "just prose" --
+# the same failure mode that let @Recycle sit in 1 of 9 scanner SKIP_DIRS.
+
+
+@pytest.mark.parametrize("tool", ["zspace_recycle_list", "zspace_du", "zspace_usage"])
+def test_space_tools_warn_about_at_recycle(tool):
+    from zspace_cli import mcp_server as m
+
+    doc = getattr(m, tool).__doc__ or ""
+    assert "@Recycle" in doc, f"{tool} must warn about the mount-side @Recycle name"
+
+
+def test_recycle_list_doc_names_both_views():
+    """The API path and the mount path must both appear, or the mapping is useless."""
+    from zspace_cli import mcp_server as m
+
+    doc = m.zspace_recycle_list.__doc__ or ""
+    assert "/.recycle/my" in doc
+    assert ".zspace_trash" in doc
+
+
+def test_recycle_list_doc_warns_n001411_proves_nothing():
+    """Probing @Recycle via the file API looks like a check but is not one."""
+    from zspace_cli import mcp_server as m
+
+    assert "N001411" in (m.zspace_recycle_list.__doc__ or "")
+
+
+def test_usage_doc_distinguishes_physical_from_logical():
+    """my_recycle/my are physical; a walk is logical. Conflating them reads as a bug."""
+    from zspace_cli import mcp_server as m
+
+    doc = m.zspace_usage.__doc__ or ""
+    assert "my_recycle" in doc
+    assert "physical" in doc.lower()
