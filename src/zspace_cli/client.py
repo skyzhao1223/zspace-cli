@@ -377,7 +377,7 @@ class ZSpaceClient:
             client.glob("/sata11/my/data/影视/*.mkv")
             client.glob("/sata11/my/data/**/*.mp4")
 
-        The static prefix before the first wildcard is the scan root; the NAS
+        The directory holding the first wildcard is the scan root; the NAS
         directory tree is walked from there. Patterns must be absolute.
         """
         if not pattern.startswith("/"):
@@ -385,10 +385,13 @@ class ZSpaceClient:
         if not any(ch in pattern for ch in "*?["):
             raise ValueError(f"no wildcard in glob pattern: {pattern!r}")
 
-        root = pattern
+        root = "/"
         for i, ch in enumerate(pattern):
             if ch in "*?[":
-                root = pattern[:i].rstrip("/") or "/"
+                # The wildcard may sit mid-segment (``/dir/2026-1*.log``), so the
+                # scan root is the *directory* of the static prefix — not the
+                # prefix itself, which would be a non-existent partial path.
+                root = pattern[:i].rsplit("/", 1)[0] or "/"
                 break
         regex = _glob_to_regex(pattern)
         matches: list[FileEntry] = []

@@ -343,6 +343,36 @@ def test_glob_single_star_is_shallow(client):
     assert [e.path for e in res] == ["/d/x.mkv"]
 
 
+def test_glob_mid_segment_wildcard_scans_parent_dir(client):
+    """A wildcard inside a path segment must not truncate the scan root.
+
+    Regression: ``/d/2026-1*.log`` used to walk ``/d/2026-1`` — a non-existent
+    partial path — because the root was the raw prefix before the first
+    wildcard. ``ls`` then raised, ``walk`` swallowed it, and glob silently
+    returned no matches while ``/d/*.log`` worked.
+    """
+    pages = {
+        "/d": {
+            "list": [
+                _entry("2026-10-05.log", "/d/2026-10-05.log"),
+                _entry("2026-09-30.log", "/d/2026-09-30.log"),
+                _entry("note.txt", "/d/note.txt"),
+            ]
+        },
+    }
+    client._http.post.side_effect = _glob_post(pages)
+    assert [e.path for e in client.glob("/d/2026-1*.log")] == ["/d/2026-10-05.log"]
+
+
+def test_glob_mid_segment_wildcard_in_first_segment_scans_root(client):
+    pages = {
+        "/": {"list": [_entry("data", "/data", is_dir="1"),
+                       _entry("etc", "/etc", is_dir="1")]}
+    }
+    client._http.post.side_effect = _glob_post(pages)
+    assert [e.path for e in client.glob("/da*")] == ["/data"]
+
+
 def test_glob_sorts_by_path(client):
     pages = {"/d": {"list": [_entry("b", "/d/b.mkv"), _entry("a", "/d/a.mkv")]}}
     client._http.post.side_effect = _glob_post(pages)
