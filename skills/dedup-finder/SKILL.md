@@ -168,9 +168,17 @@ prefer = 0 if any(h in path for h in PREFER_KEEP_HINTS) else 1
 > 如果确实想要 glob(比如「只在第一层目录名上匹配」),建议单独开 issue:那需要先
 > 决定内置提示词要不要一起迁移,以及迁移之后老配置的兼容期怎么算。
 
-**可移植性提醒**:相对路径的分隔符是**平台原生**的(POSIX 是 `/`,Windows 是
-`\`)。所以 `工作/终稿` 这种**含分隔符**的提示词只在 POSIX 上有效;要跨平台,写
-**单级目录名**(`终稿`),它在两边都命中。
+**路径分隔符**:相对路径**统一用 `/`**(与其余 8 个 scanner 一致),Windows 上也
+一样。所以 `工作/终稿` 这种**含分隔符**的提示词三平台都有效,不必退化成单级目录名。
+
+> 这里曾经不是这样,记下来免得有人"顺手改回去":本 skill 早先用字符串切片取相对
+> 路径(`entry.path[len(root)+1:]`),Windows 上于是得到 `工作\终稿`。后果不止是
+> 汇报里混着两种分隔符 —— `keep_rank()` 的深度这一级是 `item["path"].count("/")`,
+> 在反斜杠路径上恒为 0,「浅路径优先」在整个 Windows 平台上是失效的,排序退化成
+> 只比 mtime 与名字长度,于是会建议**删掉浅层那份、保留深层那份**,与本 skill 自己
+> 的文档和汇报文字相反。单元级实测:`keep_rank(shallow) < keep_rank(deep)` 对
+> `a/b/c/G.bin` 为 True、对 `a\b\c\G.bin` 为 False。现已在 scanner 侧统一成
+> 正斜杠(POSIX 上 `os.sep` 本就是 `/`,该 replace 是空操作,输出逐字节不变)。
 
 ### 模式锚定规则(`skip_dirs`)
 
@@ -360,7 +368,6 @@ Windows 盘符两种)、`prefer_keep_hints` 不是数组 / 元素不是字符串
 | `prefer_keep_hints` 里的 `*` 不起作用 | `终*` 命中不了 `终稿/` | 它是**子串**匹配,不是 glob(刻意保持与内置提示词同一条规则);写 `终稿` |
 | `keep` 换了一份但不知道为什么 | 删除计划第一名变了 | 看人类报告里 `⚙ 已加载覆盖配置` 那段的「保留提示词生效全集」,或 `stats.config.prefer_keep_hints_effective` |
 | 重复组数变少了 | `duplicate_groups` 下降 | `skip_dirs` 剪掉副本之后,一组不足 2 份就不成组;对照 `stats.config.skipped_dirs` |
-| 含 `/` 的提示词在 Windows 上不灵 | POSIX 上有效、Windows 上无效 | 相对路径用的是平台原生分隔符;要跨平台就写**单级目录名**(`终稿`) |
 
 ## 已知 gap
 
