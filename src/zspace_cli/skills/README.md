@@ -117,29 +117,42 @@ $ mv -n a/X.jpg 图片/ && mv -n b/x.jpg 图片/     # 第二条静默什么都�
 }
 ```
 
-| 键 | 作用 | 合并语义 |
-|----|------|---------|
-| `whitelist_dirs` | 目录白名单，`fnmatch` glob | **追加**到内置白名单（file-sorter 是 `--keep-dir`，photo-organizer 是 `WHITELIST_DIRS`），内置条目一条都不删 |
-| `extension_overrides` | 扩展名 → 类别 | **逐扩展名改判**：该扩展名先从所有内置集合里摘掉，再放进指定的那一个；没写到的扩展名完全不受影响 |
+四个键，**没有一个 skill 支持全部四个**——每个 skill 只暴露它自己真正有的机制：
 
-三条全家族一致的规则：
+| 键 | 作用 | 合并语义 | 哪些 skill 有 |
+|----|------|---------|--------------|
+| `whitelist_dirs` | 目录白名单，`fnmatch` glob | **追加**到内置白名单，内置条目一条都不删 | file-sorter、photo-organizer、music-organizer、work-organizer、portfolio-organizer |
+| `skip_dirs` | 目录跳过，`fnmatch` glob | **追加**到内置 `SKIP_DIRS`；命中的目录**整棵不进入** | download-cleaner、backup-auditor、dedup-finder |
+| `extension_overrides` | 扩展名 → 类别 | **逐扩展名改判**：该扩展名先从**所有**内置表里摘掉，再放进指定的那一个；没写到的扩展名完全不受影响 | 除 dedup-finder 外的 7 个（它没有任何扩展名表） |
+| `prefer_keep_hints` | 重复组里优先保留哪一份 | **追加**到内置 `PREFER_KEEP_HINTS`；仍是子串匹配，**没有升级成 glob** | dedup-finder 独有 |
+
+> **为什么 `whitelist_dirs` 和 `skip_dirs` 不合并成一个键**：`whitelist_dirs` 的语义是「这块是**有意的结构**，别当成不合规」，`skip_dirs` 的语义是「这块**别扫**」。前 5 个 skill 判的是目录名合规性，后 3 个根本没有合规判定这个概念——给它们同一个键却是另一种含义，会让「在 skill 之间复制一份 config」产生静默的意外行为。
+
+四条全家族一致的规则：
 
 1. **没有这个文件 = 行为与引入该机制之前逐字节一致**（不多一个 JSON 字段）。所以它不是升级风险，只是多了一个可选项。
 2. **配置有问题就报错退出（exit 1），绝不静默忽略**——键名拼错一个字母（`whitelist_dir`）会让整份配置悄悄失效，而用户看到的现象是「我明明加进白名单了它还在报」。报错会指名文件路径和出错的键。
 3. **模式锚定在 `--root`**，对「整段相对路径」或「任意一级目录名」做大小写不敏感的 `fnmatch`。所以 `原盘` 命中任意深度的同名目录，而 `原盘/*` 只命中 `--root` 第一层的 `原盘/` 底下的**子目录**（连 `原盘/` 自己一起保住要写 `原盘`，不带 `/*`）。绝对路径匹配不上任何东西，所以直接报错。
+4. **内置条目只增不删**——白名单、跳过表、扩展名表、保留提示词都是**追加**，配置永远撤不掉内置行为。唯一会「删」的是 `extension_overrides`：它把该扩展名从所有内置表里摘掉再放进你指定的那一张，这是改判所必需的（分类是有序阶梯，只加不删等于静默无效）。
 
 生效与否有据可查：加载成功时 stderr 打一行 `ℹ️ 已加载覆盖配置 …`，`--json` 里多一个 `stats.config`。**结果里没有 `stats.config` 这个键 = 没找到配置文件 = 覆盖没生效。**
 
-**当前支持范围**（机制是逐字复制进每个脚本的，可直接照搬到其余 skill）：
+**支持范围：8 个专项 scanner 全部接入**（机制是逐字复制进每个脚本的——`zs skill` 按目录 `copytree` 安装，`skills/<name>/` 之外的模块到不了用户机器，所以无法共享）：
 
-| Skill | 支持 | 说明 |
-|-------|:---:|------|
-| **file-sorter** | ✅ | 两个键都支持；`whitelist_dirs` 等价于「每次自动加上这几条 `--keep-dir`」，命中的文件**仍计入 `stats`**（`stats.protected`） |
-| **photo-organizer** | ✅ | 两个键都支持；`whitelist_dirs` 是「**这块别扫**」，子树里的文件不计入 `stats.files`，被跳过的数量记在 `stats.config.skipped_files` |
-| nas-report | ❌ | 刻意不支持：它只出画像与路由、不判合规，而改它的类别表会静默改变路由结论并与下游专项 skill 的口径脱节。它的 SKILL.md 里写了完整理由，也写了**路由时该怎么把这件事告诉用户** |
-| 其余专项 skill（共 6 个） | ⏳ | 尚未接入，见 PR 说明 |
+| Skill | 键集 | `whitelist_dirs` / `skip_dirs` 命中后**具体发生什么** | 可观测的计数键 |
+|-------|------|------------------------------------------------------|---------------|
+| **file-sorter** | `whitelist_dirs` `extension_overrides` | 等价于自动加上这几条 `--keep-dir`；命中的文件**仍计入 `stats`**，只是归入 `protected` | `stats.protected` |
+| **photo-organizer** | `whitelist_dirs` `extension_overrides` | **整棵子树跳过**，里面的文件不计入 `stats.files` | `stats.config.skipped_files` |
+| **music-organizer** | `whitelist_dirs` `extension_overrides` | **整棵子树跳过**（同 photo-organizer） | `stats.config.skipped_files` |
+| **work-organizer** | `whitelist_dirs` `extension_overrides` | **只豁免目录名**，子树里的文件照扫照报（它豁免的是「目录名不符合规范」这一条） | 无 |
+| **portfolio-organizer** | `whitelist_dirs` `extension_overrides` | 语义是「**这个目录不算项目**」，文件仍被计入统计 | 无 |
+| **download-cleaner** | `skip_dirs` `extension_overrides` | **整棵不进入**，里面的文件既不计入 `stats` 也不出任何问题 | `stats.config.skipped_dirs` |
+| **backup-auditor** | `skip_dirs` `extension_overrides` | **整棵不进入**，且作用在**三层**：备份项收集、coverage 的源目录收集、`dir_size` 递归求体积 | `stats.config.skipped_dirs` |
+| **dedup-finder** | `skip_dirs` `prefer_keep_hints` | **整棵不进入**，不参与任何重复组 | `stats.config.skipped_dirs` |
+| nas-report | ❌ 刻意不支持 | 它只出画像与路由、不判合规，而改它的类别表会静默改变路由结论并与下游专项 skill 的口径脱节。完整理由与**路由时该怎么把这件事告诉用户**都在它的 SKILL.md 里 | — |
+| zspace-nas | ❌ 不适用 | 它是 API 参考与脚本底座，没有扫描器 | — |
 
-> ⚠️ 两个 skill 的 `whitelist_dirs` **效果不完全相同**（一个仍计入统计、一个整棵跳过），因为它们的内置机制本来就不同。照抄文档会讲错——细节看各自 SKILL.md 的「配置覆盖」一节。
+> ⚠️ **`whitelist_dirs` 在 5 个 skill 里有 4 种不同效果**（仍计入并归 protected / 整棵跳过 / 只豁免目录名 / 不算项目），因为它们的内置机制本来就不同。`skip_dirs` 则在 3 个 skill 里**完全一致**。想在 skill 之间复制一份 config 之前，先看这一列，或看各自 SKILL.md 的「配置覆盖」一节。
 
 ## Skill 清单
 
