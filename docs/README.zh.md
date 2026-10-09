@@ -150,7 +150,7 @@ zs skill ~/your-project/skills/ --only nas-report,photo-organizer   # 或按需�
 | 单盘健康 | `zs disks` | `client.disks()` / `client.free_bays()` | `zspace_disks` |
 | SMART 报告 | `zs smart [sn]` | `client.smart(sn)` | `zspace_smart` |
 | 回收站（读） | `zs recycle list/config` | `client.recycle_list()` / `client.recycle_config()` | `zspace_recycle_list` / `zspace_recycle_config` |
-| 回收站（写） | `zs recycle restore/purge/empty` | `client.recycle_restore()` / `recycle_purge()` / `recycle_empty()` | `zspace_recycle_restore` / `_purge` / `_empty`（需 confirm） |
+| 回收站（写） | `zs recycle restore/purge/empty` | `client.recycle_restore()` / `recycle_purge()` / `recycle_empty()` | `zspace_recycle_restore` / `zspace_recycle_purge` / `zspace_recycle_empty`（需 confirm） |
 | 百度网盘（只读） | `zs baidu check/ls/tasks/fails/retry` | `client.baidu_*()` | — |
 
 > `ls` 会自动分页（NAS 单次最多返回 50 条，会循环拉全）；`find` 走 NAS 全文索引，跨目录搜索。

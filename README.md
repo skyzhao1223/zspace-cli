@@ -124,7 +124,7 @@ patterns on the source path. `zs baidu check`/`ls`/`tasks`/`fails` also accept
 | Per-disk health | `zs disks` | `client.disks()` / `client.free_bays()` | `zspace_disks` |
 | SMART report | `zs smart [sn]` | `client.smart(sn)` | `zspace_smart` |
 | Recycle bin (read) | `zs recycle list/config` | `client.recycle_list()` / `client.recycle_config()` | `zspace_recycle_list` / `zspace_recycle_config` |
-| Recycle bin (write) | `zs recycle restore/purge/empty` | `client.recycle_restore()` / `recycle_purge()` / `recycle_empty()` | `zspace_recycle_restore` / `_purge` / `_empty` (confirm-gated) |
+| Recycle bin (write) | `zs recycle restore/purge/empty` | `client.recycle_restore()` / `recycle_purge()` / `recycle_empty()` | `zspace_recycle_restore` / `zspace_recycle_purge` / `zspace_recycle_empty` (confirm-gated) |
 | Baidu NetDisk (read side) | `zs baidu check/ls/tasks/fails/retry` | `client.baidu_*()` | — |
 
 ---
