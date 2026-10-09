@@ -76,6 +76,7 @@ with ZSpaceClient() as zs:
 | `zs tree [path]` | Tree view (`-d/--depth N`, default 2) |
 | `zs usage` | Storage profile — physical usage per pool, per user, per category. The only view that includes Time Machine backups, other users' spaces, and Docker/RAID overhead (`--refresh`, `--wait N`) |
 | `zs du <path>...` | Directory size via server-side statistics. Refuses to pass off a partial number as final when the NAS won't converge on a large tree; `--walk` forces an exact client-side traversal |
+| `zs bigfiles [path]...` | Largest files, scanned server-side (`--min-size MiB`, `--top N`). Whole-library scan of 2.69M files took 2m41s versus 57 min for a client-side walk |
 | `zs disks` | Per-disk free space, temperature, health, fragmentation, power-on hours, plus empty bays |
 | `zs smart [sn]` | SMART report (`--all` for every disk) |
 | `zs recycle list` | Recycle bin contents with original locations (`--public` for the shared bin) |
@@ -115,11 +116,13 @@ patterns on the source path.
 | Health check | `zs check` | `client.is_connected()` | `zspace_check` |
 | Storage pools | `zs check` | `client.pool_info()` | `zspace_pool_info` |
 | Disk diagnostics | — | `client.disk_stats()` | `zspace_disk_stats` |
-| Storage profile | `zs usage` | `client.usage_summary()` | — |
-| Directory size | `zs du <path>` | `client.statistic(path)` / `client.walk_stat(path)` | — |
-| Per-disk health | `zs disks` | `client.disks()` / `client.free_bays()` | — |
-| SMART report | `zs smart [sn]` | `client.smart(sn)` | — |
-| Recycle bin | `zs recycle list/restore/purge/empty/config` | `client.recycle_*()` | — |
+| Storage profile | `zs usage` | `client.usage_summary()` | `zspace_usage` |
+| Directory size | `zs du <path>` | `client.statistic(path)` / `client.walk_stat(path)` | `zspace_du` |
+| Largest files | `zs bigfiles [path]` | `client.find_large(paths)` | `zspace_bigfiles` |
+| Per-disk health | `zs disks` | `client.disks()` / `client.free_bays()` | `zspace_disks` |
+| SMART report | `zs smart [sn]` | `client.smart(sn)` | `zspace_smart` |
+| Recycle bin (read) | `zs recycle list/config` | `client.recycle_list()` / `client.recycle_config()` | `zspace_recycle_list` / `zspace_recycle_config` |
+| Recycle bin (write) | `zs recycle restore/purge/empty` | `client.recycle_restore()` / `recycle_purge()` / `recycle_empty()` | `zspace_recycle_restore` / `_purge` / `_empty` (confirm-gated) |
 
 ---
 

@@ -106,6 +106,7 @@ zs skill ~/your-project/skills/ --only nas-report,photo-organizer   # 或按需�
 | `zs tree [path]` | 树形浏览（`-d/--depth N`，默认 2） |
 | `zs usage` | 存储画像 — 按池/用户/类别看物理占用。唯一能看到 Time Machine 备份、其他用户空间、Docker/RAID 开销的入口（`--refresh`、`--wait N`） |
 | `zs du <path>...` | 目录体积（服务端统计）。大目录服务端不收敛时会明确告警而非谎报结果，`--walk` 强制客户端精确遍历 |
+| `zs bigfiles [path]...` | 服务端找大文件（`--min-size MiB`、`--top N`）。全库 269 万文件实测 2 分 41 秒，客户端遍历要 57 分钟 |
 | `zs disks` | 每块盘的余量/温度/健康/碎片率/通电小时 + 空闲盘位 |
 | `zs smart [sn]` | SMART 报告（`--all` 查全部盘） |
 | `zs recycle list` | 回收站内容含原位置（`--public` 看公共回收站） |
@@ -142,6 +143,13 @@ zs skill ~/your-project/skills/ --only nas-report,photo-organizer   # 或按需�
 | 连接检查 | `zs check` | `client.is_connected()` | `zspace_check` |
 | 存储池容量 | `zs check` | `client.pool_info()` | `zspace_pool_info` |
 | 磁盘诊断 | — | `client.disk_stats()` | `zspace_disk_stats` |
+| 存储画像 | `zs usage` | `client.usage_summary()` | `zspace_usage` |
+| 目录体积 | `zs du <path>` | `client.statistic(path)` / `client.walk_stat(path)` | `zspace_du` |
+| 大文件榜 | `zs bigfiles [path]` | `client.find_large(paths)` | `zspace_bigfiles` |
+| 单盘健康 | `zs disks` | `client.disks()` / `client.free_bays()` | `zspace_disks` |
+| SMART 报告 | `zs smart [sn]` | `client.smart(sn)` | `zspace_smart` |
+| 回收站（读） | `zs recycle list/config` | `client.recycle_list()` / `client.recycle_config()` | `zspace_recycle_list` / `zspace_recycle_config` |
+| 回收站（写） | `zs recycle restore/purge/empty` | `client.recycle_restore()` / `recycle_purge()` / `recycle_empty()` | `zspace_recycle_restore` / `_purge` / `_empty`（需 confirm） |
 
 > `ls` 会自动分页（NAS 单次最多返回 50 条，会循环拉全）；`find` 走 NAS 全文索引，跨目录搜索。
 

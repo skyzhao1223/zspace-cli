@@ -14,6 +14,8 @@ from zspace_cli.cli import _tib_str, app
 from zspace_cli.client import (
     DirStat,
     DiskInfo,
+    LargeFile,
+    LargeFileScan,
     PoolUsage,
     RecycleEntry,
     UsageEntry,
@@ -72,6 +74,11 @@ def _run(*args, **overrides):
     c.recycle_empty.return_value = {"total_num": "2", "fail_num": "0"}
     c.recycle_restore.return_value = (1, [])
     c.recycle_purge.return_value = (1, [])
+    c.find_large.return_value = LargeFileScan(
+        state=2, paths=["/sata11/my/data"], min_size=50 * 1024 * 1024,
+        max_size=1024 ** 5, topk=1000, scanned=6979, matched=311,
+        files=[LargeFile("1+2.zip", "/sata11/my/data/软件/游戏/Cemu/1+2.zip",
+                         17349002937, "1737669313", "106")])
     c.recycle_config.return_value = {"my_cycle": -1, "public_cycle": -1}
     c.recycle_set_config.return_value = {"my_cycle": 30, "public_cycle": -1}
     for k, v in overrides.items():
@@ -438,4 +445,65 @@ def test_recycle_config_json():
 def test_recycle_config_error_exits_1():
     r, out, _ = _run("recycle", "config",
                      **{"recycle_config.side_effect": ZSpaceError("500", "x")})
+    assert r.exit_code == 1
+
+
+# ── zs bigfiles ────────────────────────────────────────────────────────────
+
+
+def test_bigfiles_lists_matches():
+    r, out, c = _run("bigfiles", "/sata11/my/data/软件")
+    assert r.exit_code == 0
+    c.find_large.assert_called_once()
+    assert "6,979" in out and "311" in out
+    assert "1+2.zip" in out
+
+
+def test_bigfiles_converts_min_size_to_bytes():
+    r, out, c = _run("bigfiles", "--min-size", "100")
+    assert r.exit_code == 0
+    assert c.find_large.call_args.kwargs["min_size"] == 100 * 1024 * 1024
+
+
+def test_bigfiles_defaults_to_data_root():
+    r, out, c = _run("bigfiles")
+    assert r.exit_code == 0
+    assert c.find_large.call_args.args[0] == ["/sata11/my/data"]
+
+
+def test_bigfiles_json():
+    r, out, _ = _run("bigfiles", "--json")
+    import json
+    d = json.loads(out)
+    assert d["complete"] is True and d["matched"] == 311
+    assert d["files"][0]["bytes"] == 17349002937
+
+
+def test_bigfiles_warns_when_incomplete():
+    r, out, _ = _run("bigfiles", **{"find_large.return_value": LargeFileScan(
+        state=1, paths=["/a"], scanned=10, matched=0, files=[])})
+    assert r.exit_code == 0
+    assert "扫描未完成" in out and "部分结果" in out
+
+
+def test_bigfiles_no_matches():
+    r, out, _ = _run("bigfiles", **{"find_large.return_value": LargeFileScan(
+        state=2, paths=["/a"], scanned=10, matched=0, files=[])})
+    assert r.exit_code == 0
+    assert "没有匹配的文件" in out
+
+
+def test_bigfiles_top_limits_rows():
+    files = [LargeFile(f"f{i}", f"/a/f{i}", (100 - i) * GiB) for i in range(10)]
+    r, out, c = _run("bigfiles", "--top", "3",
+                     **{"find_large.return_value": LargeFileScan(
+                         state=2, paths=["/a"], scanned=10, matched=10, files=files)})
+    assert r.exit_code == 0
+    assert c.find_large.call_args.kwargs["topk"] == 1000  # never below the server floor
+    assert "f0" in out and "f2" in out and "f3" not in out
+
+
+def test_bigfiles_error_exits_1():
+    r, out, _ = _run("bigfiles", **{"find_large.side_effect":
+                                    ZSpaceError("N001212", "参数有误")})
     assert r.exit_code == 1

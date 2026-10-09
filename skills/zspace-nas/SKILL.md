@@ -48,6 +48,7 @@ zs usage                                    # 全盘物理占用：按池/用户
 zs usage --refresh --wait 120               # 先让 NAS 重算再读
 zs du /sata11/my/data/影视                  # 目录体积（服务端，秒出）
 zs du /sata11/my/data/大目录 --walk         # 服务端不收敛时改用遍历（慢但准）
+zs bigfiles /sata11/my/data --min-size 1024 # 服务端找大文件（全库 269 万文件约 2m41s）
 zs disks                                    # 每盘余量/温度/健康/碎片/通电小时 + 空盘位
 zs smart --all                              # SMART 报告
 zs smart WWZ398TH                           # 按序列号查单盘
@@ -107,6 +108,13 @@ with ZSpaceClient() as c:
         print(st.size, st.files, st.dirs, st.categories)
     else:
         st = c.walk_stat('/sata11/my/data/影视', workers=12)  # 回退：遍历
+
+    scan = c.find_large('/sata11/my/data', min_size=1024*1024*1024)  # 服务端找大文件
+    if scan.complete:                          # state: 1=扫描中, 2=完成
+        print(scan.scanned, scan.matched)
+        for f in scan.files[:20]:
+            print(f.size, f.path)
+    c.find_large_delete()                      # 只有一个全局任务槽，用完清掉
 
     for d in c.disks():                      # 每盘余量/温度/健康/碎片/通电小时
         print(d.pool, d.position, d.model, d.used_pct, d.power_on_hours)

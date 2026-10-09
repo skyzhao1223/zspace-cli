@@ -6,6 +6,8 @@ from zspace_cli.client import (
     DirStat,
     DiskInfo,
     FileEntry,
+    LargeFile,
+    LargeFileScan,
     PoolUsage,
     RecycleEntry,
     UsageEntry,
@@ -27,4 +29,6 @@ __all__ = [
     "PoolUsage",
     "UsageEntry",
     "RecycleEntry",
+    "LargeFile",
+    "LargeFileScan",
 ]

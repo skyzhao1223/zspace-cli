@@ -223,6 +223,68 @@ class RecycleEntry:
 
 
 @dataclass
+class LargeFile:
+    """One match from a server-side large-file scan."""
+
+    name: str
+    path: str
+    size: int
+    modify_time: str = ""
+    ftype: str = ""
+
+    @classmethod
+    def from_api(cls, d: dict[str, Any]) -> LargeFile:
+        return cls(
+            name=d.get("name", "") or "",
+            path=d.get("path", "") or "",
+            size=_as_int(d.get("size")),
+            modify_time=str(d.get("modify_time", "") or ""),
+            ftype=str(d.get("ftype", "") or ""),
+        )
+
+
+@dataclass
+class LargeFileScan:
+    """State and results of a ``/v2/file/find/large`` task.
+
+    ``state`` is 1 while scanning and 2 when done; there is a single shared
+    task slot, so ``info`` takes no id. ``matched`` arrives as an int once the
+    scan settles but the web client also guards for an array, so both shapes
+    are accepted.
+    """
+
+    state: int = 0
+    paths: list[str] = field(default_factory=list)
+    min_size: int = 0
+    max_size: int = 0
+    topk: int = 0
+    scanned: int = 0
+    matched: int = 0
+    files: list[LargeFile] = field(default_factory=list)
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def complete(self) -> bool:
+        return self.state == 2
+
+    @classmethod
+    def from_api(cls, d: dict[str, Any]) -> LargeFileScan:
+        mc = d.get("match_count")
+        matched = len(mc) if isinstance(mc, list) else _as_int(mc)
+        return cls(
+            state=_as_int(d.get("state")),
+            paths=[str(p) for p in (d.get("paths") or [])],
+            min_size=_as_int(d.get("min_size")),
+            max_size=_as_int(d.get("max_size")),
+            topk=_as_int(d.get("topk")),
+            scanned=_as_int(d.get("scan_count")),
+            matched=matched,
+            files=[LargeFile.from_api(i) for i in (d.get("list") or [])],
+            raw=d,
+        )
+
+
+@dataclass
 class UsageEntry:
     """One row of the /system/diskusage3 breakdown."""
 
@@ -728,6 +790,82 @@ class ZSpaceClient:
             source="walk",
             requests=state["requests"],
         )
+
+    # ── server-side large-file scan ──
+    #
+    # One shared task slot (info/delete take no id), so a stale task must be
+    # cleared before creating a new one. N001307 means "no task exists", which
+    # the web client also treats as an acceptable outcome of delete.
+
+    #: Default lower bound for the large-file scan; matches the web client (50 MiB).
+    LARGE_MIN_SIZE = 50 * 1024 * 1024
+    #: Default upper bound; matches the web client (1 PiB, i.e. effectively none).
+    LARGE_MAX_SIZE = 1024 ** 5
+
+    def find_large_create(
+        self,
+        paths: list[str] | str,
+        min_size: int = LARGE_MIN_SIZE,
+        max_size: int = LARGE_MAX_SIZE,
+        topk: int = 1000,
+    ) -> LargeFileScan:
+        """Start a server-side scan for large files. Non-blocking.
+
+        All four parameters are required by the server -- omitting ``min_size``,
+        ``max_size`` or ``topk`` yields ``N001212 参数有误`` rather than a
+        default. ``paths`` is the array form (``paths[]``).
+        """
+        if isinstance(paths, str):
+            paths = [paths]
+        body = self._post_with_array(
+            "/v2/file/find/large/create",
+            list(paths),
+            {"min_size": str(min_size), "max_size": str(max_size), "topk": str(topk)},
+        )
+        return LargeFileScan.from_api(body.get("data") or {})
+
+    def find_large_info(self) -> LargeFileScan:
+        """Current large-file scan task. Raises ``N001307`` when none exists."""
+        return LargeFileScan.from_api(self._post("/v2/file/find/large/info").get("data") or {})
+
+    def find_large_delete(self) -> dict[str, Any]:
+        """Stop/clear the large-file scan task. ``N001307`` means already clear."""
+        try:
+            return self._post("/v2/file/find/large/delete")
+        except ZSpaceError as e:
+            if e.code == "N001307":
+                return {}
+            raise
+
+    def find_large(
+        self,
+        paths: list[str] | str,
+        min_size: int = LARGE_MIN_SIZE,
+        max_size: int = LARGE_MAX_SIZE,
+        topk: int = 1000,
+        wait: bool = True,
+        timeout: float = 300.0,
+        poll_interval: float = 2.0,
+    ) -> LargeFileScan:
+        """Run a large-file scan to completion and return the matches.
+
+        Clears any stale task first, creates a new one, then polls
+        :meth:`find_large_info` until ``state != 1`` (1 = scanning, 2 = done).
+        Server-side and fast: a 7k-file tree scanned in about 2 seconds, versus
+        ~765 requests and ~10 seconds for the equivalent client-side walk.
+
+        The task is left in place on success so callers can re-read it; use
+        :meth:`find_large_delete` to clear it.
+        """
+        self.find_large_delete()
+        scan = self.find_large_create(paths, min_size, max_size, topk)
+        if not wait:
+            return scan
+        deadline = time.time() + timeout
+        while scan.state == 1 and time.time() < deadline:
+            time.sleep(poll_interval)
+            scan = self.find_large_info()
+        return scan
 
     # ── recycle bin ──
     #

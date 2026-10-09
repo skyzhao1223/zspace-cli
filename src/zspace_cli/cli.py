@@ -701,6 +701,64 @@ def du(
 
 
 @app.command()
+def bigfiles(
+    paths: list[str] = typer.Argument(None, help="扫描目录（默认 /sata11/my/data）"),
+    min_size: int = typer.Option(50, "--min-size", help="下限，单位 MiB（默认 50）"),
+    top: int = typer.Option(30, "--top", help="最多列出多少个"),
+    timeout: int = typer.Option(300, "--timeout", help="等待扫描完成的秒数"),
+    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
+):
+    """服务端大文件扫描 — 比遍历快得多
+
+    NAS 端直接扫，实测 7k 文件的目录约 2 秒出结果（客户端遍历要 765 请求 / 10 秒）。
+    注意服务端只有一个任务槽，本命令会先清掉残留任务再新建。
+    """
+    targets = paths or [DEFAULT_PATH]
+    with _client() as c:
+        try:
+            scan = c.find_large(
+                targets,
+                min_size=min_size * 1024 * 1024,
+                topk=max(top, 1000),
+                timeout=timeout,
+            )
+        except ZSpaceError as e:
+            _print_error(e)
+            raise typer.Exit(1)
+
+        if json_output:
+            _emit_json({
+                "complete": scan.complete, "state": scan.state,
+                "paths": scan.paths, "min_size": scan.min_size,
+                "scanned": scan.scanned, "matched": scan.matched,
+                "files": [{"name": f.name, "path": f.path, "bytes": f.size,
+                           "gib": round(f.size / 1024**3, 3),
+                           "modify_time": f.modify_time} for f in scan.files[:top]],
+            })
+            return
+
+        if not scan.complete:
+            console.print(f"[yellow]![/yellow] 扫描未完成（state={scan.state}），"
+                          f"以下为部分结果，可用 --timeout 加大等待")
+        console.print(
+            f"扫描 {scan.scanned:,} 个文件，命中 [bold]{scan.matched:,}[/bold] 个 "
+            f"≥ {min_size} MiB"
+        )
+        if not scan.files:
+            console.print("[dim]没有匹配的文件[/dim]")
+            return
+        shown = scan.files[:top]
+        total = sum(f.size for f in shown)
+        table = Table(box=box.SIMPLE_HEAD, show_header=True,
+                      title=f"最大的 {len(shown)} 个（合计 {_tib_str(total)}）")
+        table.add_column("体积", justify="right", no_wrap=True)
+        table.add_column("路径")
+        for f in shown:
+            table.add_row(_size_str(f.size), f.path)
+        console.print(table)
+
+
+@app.command()
 def disks(
     json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
 ):

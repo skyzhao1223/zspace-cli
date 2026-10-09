@@ -501,3 +501,102 @@ def test_recycle_entry_from_api():
 def test_recycle_entry_tolerates_missing_fields():
     e = RecycleEntry.from_api({"name": "d", "path": "/p", "is_dir": "1"})
     assert e.is_dir is True and e.size == 0 and e.original_path == ""
+
+
+# ── server-side large-file scan ────────────────────────────────────────────
+
+
+def _large_task(**over):
+    base = {"id": 9, "state": 2, "paths": ["/a"], "min_size": 52428800,
+            "max_size": 1024 ** 5, "topk": 1000, "scan_count": 6979,
+            "match_count": 311,
+            "list": [{"name": "big.zip", "path": "/a/big.zip", "is_dir": "0",
+                      "size": "17349002937", "modify_time": "1737669313",
+                      "ftype": "106"}]}
+    base.update(over)
+    return base
+
+
+def test_find_large_create_sends_all_four_params(client):
+    """The server rejects the call unless min_size/max_size/topk are present."""
+    client._http.post.return_value = _mock("200", _large_task(state=1))
+    scan = client.find_large_create("/a")
+    args, kwargs = client._http.post.call_args
+    assert "/v2/file/find/large/create" in args[0]
+    content = kwargs["content"]
+    assert "paths%5B%5D=" in content
+    assert "min_size=52428800" in content
+    assert f"max_size={1024 ** 5}" in content
+    assert "topk=1000" in content
+    assert scan.state == 1 and scan.complete is False
+
+
+def test_find_large_polls_until_done(client, monkeypatch):
+    monkeypatch.setattr("zspace_cli.client.time.sleep", lambda s: None)
+    client._http.post.side_effect = [
+        _mock("N001307", {}, "任务不存在"),                 # stale-task cleanup
+        _mock("200", _large_task(state=1, match_count=0, list=[])),  # create
+        _mock("200", _large_task(state=1)),                 # still scanning
+        _mock("200", _large_task()),                        # done
+    ]
+    scan = client.find_large("/a")
+    assert scan.complete is True
+    assert scan.scanned == 6979 and scan.matched == 311
+    assert scan.files[0].name == "big.zip"
+    assert scan.files[0].size == 17349002937
+    assert client._http.post.call_count == 4
+
+
+def test_find_large_tolerates_missing_stale_task(client, monkeypatch):
+    """N001307 on the pre-clean is normal, not an error."""
+    monkeypatch.setattr("zspace_cli.client.time.sleep", lambda s: None)
+    client._http.post.side_effect = [
+        _mock("N001307", {}, "任务不存在"),
+        _mock("200", _large_task()),
+    ]
+    assert client.find_large("/a", timeout=0).complete is True
+
+
+def test_find_large_no_wait_skips_polling(client):
+    client._http.post.side_effect = [
+        _mock("N001307", {}, "任务不存在"),
+        _mock("200", _large_task(state=1, match_count=0, list=[])),
+    ]
+    scan = client.find_large("/a", wait=False)
+    assert scan.complete is False
+    assert client._http.post.call_count == 2
+
+
+def test_find_large_timeout_leaves_result_incomplete(client, monkeypatch):
+    monkeypatch.setattr("zspace_cli.client.time.sleep", lambda s: None)
+    client._http.post.side_effect = [
+        _mock("N001307", {}, "任务不存在"),
+        _mock("200", _large_task(state=1, match_count=0, list=[])),
+    ]
+    scan = client.find_large("/a", timeout=0)
+    assert scan.state == 1 and scan.complete is False
+
+
+def test_find_large_delete_reraises_other_errors(client):
+    client._http.post.return_value = _mock("500", {}, "boom")
+    with pytest.raises(ZSpaceError):
+        client.find_large_delete()
+
+
+def test_find_large_delete_swallows_not_exists(client):
+    client._http.post.return_value = _mock("N001307", {}, "任务不存在")
+    assert client.find_large_delete() == {}
+
+
+def test_large_file_scan_handles_array_match_count(client):
+    """The web client guards for match_count arriving as a list."""
+    client._http.post.return_value = _mock(
+        "200", {"state": 2, "match_count": [1, 2, 3], "list": []})
+    assert client.find_large_info().matched == 3
+
+
+def test_large_file_scan_tolerates_empty_payload(client):
+    client._http.post.return_value = _mock("200", {})
+    scan = client.find_large_info()
+    assert scan.state == 0 and scan.complete is False
+    assert scan.files == [] and scan.paths == []
