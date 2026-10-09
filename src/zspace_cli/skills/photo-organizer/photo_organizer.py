@@ -568,7 +568,14 @@ class Scanner:
             if entry.is_symlink():
                 continue
             if entry.is_dir():
-                if name in SKIP_DIRS or (name.startswith(".") and name not in JUNK_NAMES):
+                # 点前缀目录一律跳过,不给 JUNK_NAMES 开豁免(家族审计 F7):
+                # 这里曾写 name.startswith(".") and name not in JUNK_NAMES,
+                # 于是名字叫 .DS_Store / .localized 的**目录**(JUNK_NAMES 里
+                # 仅有的两个点前缀成员)会被下钻、被计数,还领到「目录名不符合
+                # 日期规范」的误报 —— #58(修的是文件分支)的镜像。其余 8 个
+                # scanner 的 dir 分支都是无条件形式。文件叫 .DS_Store 仍由
+                # 文件分支判 junk,不受影响。
+                if name in SKIP_DIRS or name.startswith("."):
                     continue
                 self.stats["dirs"] += 1
                 child_rel = rel_parts + [name]

@@ -971,5 +971,50 @@ finally:
     shutil.rmtree(root, ignore_errors=True)
 PYEOF
 
+echo "=== TEST 11: 名为 .DS_Store/.localized 的目录不下钻(家族审计 F7)==="
+# F7:dir 分支曾写 name.startswith(".") and name not in JUNK_NAMES,于是名字叫
+# .DS_Store / .localized 的**目录**(JUNK_NAMES 里仅有的两个点前缀成员)会被
+# 下钻、被计数,还领到「目录名不符合日期规范」的误报 —— #58(修的是文件分支)
+# 的镜像。其余 8 个 scanner 的 dir 分支都是无条件跳过点目录。
+PHOTO_SKILL_DIR="$SKILL_DIR" "$PY" - <<'PYEOF'
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+skill = os.environ["PHOTO_SKILL_DIR"]
+script = f"{skill}/photo_organizer.py"
+
+root = tempfile.mkdtemp(prefix="po-dotdirs.")
+try:
+    os.makedirs(os.path.join(root, "截图"))
+    os.makedirs(os.path.join(root, ".DS_Store"))
+    os.makedirs(os.path.join(root, ".localized"))
+    for i in range(2):
+        with open(os.path.join(root, "截图", f"p{i}.jpg"), "wb") as fh:
+            fh.write(b"J" * 2000)
+    with open(os.path.join(root, ".DS_Store", "inside.jpg"), "wb") as fh:
+        fh.write(b"J" * 100)
+    with open(os.path.join(root, ".localized", "x.jpg"), "wb") as fh:
+        fh.write(b"J" * 100)
+    r = subprocess.run([sys.executable, script, "scan", "--root", root, "--json"],
+                       capture_output=True, encoding="utf-8", errors="replace")
+    assert r.returncode == 0, (r.returncode, r.stderr[-400:])
+    d = json.loads(r.stdout)
+    s = d["stats"]
+    blob = json.dumps(d, ensure_ascii=False)
+    # 修复前:dirs=3 files=4,外加 .DS_Store/.localized 各领一条目录命名误报
+    assert s["dirs"] == 1, s        # 只有 截图/
+    assert s["files"] == 2, s       # 只有 截图/ 下两张
+    assert "inside.jpg" not in blob and "x.jpg" not in blob, blob[:300]
+    assert not any(i["path"] in (".DS_Store", ".localized") for i in d["issues"]), d["issues"]
+    assert d["count"] == 0, d["issues"]
+    print("  ✓ 点前缀垃圾名目录不再被下钻:dirs=1/files=2,零误报")
+finally:
+    shutil.rmtree(root, ignore_errors=True)
+PYEOF
+
 echo ""
 echo "🎉 所有 smoke test 通过"
