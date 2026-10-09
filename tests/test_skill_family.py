@@ -59,6 +59,21 @@ def _skip_dirs(tree: Path, scanner: str) -> set:
     raise AssertionError(f"{py}: SKIP_DIRS assignment not found")
 
 
+# 开发目录 —— F3:photo-organizer 曾是 9 家里唯一走 node_modules 的,一个带
+# node_modules 的库在它眼里是成百上千条「目录名不符合日期规范/非媒体文件」,
+# 而其余 8 家在同一棵树上安静得多。.git 其余 8 家也早就全跳。
+DEV_DIRS = {"node_modules", ".git"}
+
+
+@pytest.mark.parametrize("tree", TREES, ids=["skills", "src-mirror"])
+@pytest.mark.parametrize("scanner", SCANNERS)
+def test_skip_dirs_cover_dev_family(tree: Path, scanner: str) -> None:
+    missing = DEV_DIRS - _skip_dirs(tree, scanner)
+    assert not missing, (
+        f"{scanner}: SKIP_DIRS 缺开发目录 {sorted(missing)} —— "
+        f"依赖树/版本库内容会被当成用户媒体文件报出来(见 F3 背景)")
+
+
 @pytest.mark.parametrize("tree", TREES, ids=["skills", "src-mirror"])
 @pytest.mark.parametrize("scanner", SCANNERS)
 def test_skip_dirs_cover_trash_family(tree: Path, scanner: str) -> None:

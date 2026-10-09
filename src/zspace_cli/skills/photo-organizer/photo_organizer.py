@@ -41,7 +41,8 @@ SKIP_DIRS = {
     "@eaDir", "#recycle", "#@__recycle_bin", ".Trashes", ".Spotlight-V100",
     ".fseventsd", ".TemporaryItems", ".AppleDB", ".AppleDesktop", ".apdisk",
     "System Volume Information", "$RECYCLE.BIN", ".snapshots", ".zspace_trash",
-    ".trash", ".cache", "@Recycle", "lost+found",
+    ".trash", ".cache", "node_modules", ".git", "@Recycle",
+    "lost+found",
 }
 WHITELIST_DIRS = {
     "截图", "截屏", "视频", "照片", "相册", "待整理", "其他", "收藏", "原图", "实况",

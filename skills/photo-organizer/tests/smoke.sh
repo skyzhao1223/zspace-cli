@@ -923,5 +923,53 @@ os.rmdir(os.path.join(lib, "samples"))
 PYEOF
 rm -rf "$PCFG_SRC"
 
+echo "=== TEST 10: node_modules/.git 不入库扫描(家族审计 F3)==="
+# F3:此前 photo-organizer 是 9 家里唯一不跳 node_modules 的 —— 一个带
+# node_modules 的库会产出成百上千条 issue(目录名不符合日期规范/非媒体文件),
+# 而其余 8 家在同一棵树上安静得多。.git 靠点前缀规则本就扫不到,这里一并钉住。
+PHOTO_SKILL_DIR="$SKILL_DIR" "$PY" - <<'PYEOF'
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+skill = os.environ["PHOTO_SKILL_DIR"]
+script = f"{skill}/photo_organizer.py"
+
+root = tempfile.mkdtemp(prefix="po-devdirs.")
+try:
+    os.makedirs(os.path.join(root, "截图"))
+    os.makedirs(os.path.join(root, "node_modules", "somepkg", "lib"))
+    os.makedirs(os.path.join(root, ".git"))
+    for i in range(2):
+        with open(os.path.join(root, "截图", f"p{i}.jpg"), "wb") as fh:
+            fh.write(b"J" * 2000)
+    for i in range(20):
+        with open(os.path.join(root, "node_modules", "somepkg", "lib", f"mod{i}.js"), "wb") as fh:
+            fh.write(b"x" * 400)
+    with open(os.path.join(root, "node_modules", "somepkg", "asset.jpg"), "wb") as fh:
+        fh.write(b"x" * 300)
+    with open(os.path.join(root, ".git", "config"), "w") as fh:
+        fh.write("[core]")
+    r = subprocess.run([sys.executable, script, "scan", "--root", root, "--json"],
+                       capture_output=True, encoding="utf-8", errors="replace")
+    assert r.returncode == 0, (r.returncode, r.stderr[-400:])
+    d = json.loads(r.stdout)
+    s = d["stats"]
+    blob = json.dumps(d, ensure_ascii=False)
+    assert "node_modules" not in blob, blob[:300]
+    assert ".git" not in blob, blob[:300]
+    assert s["files"] == 2, s            # 只有 截图/ 下两张
+    assert s["photos"] == 2, s
+    assert s["non_media"] == 0, s        # 20 个 .js 不再算非媒体噪音
+    assert s["total_size_bytes"] == 4000, s
+    assert d["count"] == 0, d["issues"]  # 截图/ 是白名单目录,零 issue
+    print("  ✓ node_modules/.git 被跳过:21 个开发文件不入库,零噪音 issue")
+finally:
+    shutil.rmtree(root, ignore_errors=True)
+PYEOF
+
 echo ""
 echo "🎉 所有 smoke test 通过"

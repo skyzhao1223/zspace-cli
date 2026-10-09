@@ -157,7 +157,7 @@ schema 直接写在 SKILL.md 里,用户自己建。
 3. **脚本只读** — 无 apply 子命令;写操作走 Agent(shell `mv -n` 或 `zs` CLI/MCP)
 4. **弱证据标注** — `date_source` 区分 filename / exif / mdls / mtime;mtime 必须让用户
    抽查,mdls 也不是 EXIF(是 Spotlight 内容创建时间),同样要抽查
-5. **降噪** — 系统元数据目录(@eaDir/#recycle/.Trashes)与点文件静默跳过
+5. **降噪** — 系统元数据目录(@eaDir/#recycle/.Trashes)、开发目录(node_modules/.git)与点文件静默跳过
 6. **opt-in 且可证伪** — 不加 `--exif` 时输出与旧版**逐字节一致**,连 JSON 字段都不多一个;
    smoke test 里有一条负控制专门盯这件事。`config.json` 沿用同一条:没有这个文件时
    输出与引入覆盖层之前**逐字节一致**,`stats` 里连 `config` 这个键都不出现
