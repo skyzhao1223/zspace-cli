@@ -628,4 +628,85 @@ print("  ✓ 校验先于写入(内置五个集合分毫未动)+ IMAGE_EXTS/is_c
 PYEOF
 rm -rf "$PFCFG_SRC"
 
+echo "=== TEST 8: 读不了的目录不等于空项目(家族审计 F5)==="
+# F5:此前 scandir 失败只打一行 stderr,JSON 里没有 errors 键 —— 一个读不了的
+# 项目与真空项目在 JSON 里逐字节相同,都收到「空项目目录(建议删除或补充内容)」,
+# 而那是删除引导。本测试与 backup-auditor smoke TEST 8 的 F1 段同构。
+PF_SKILL_DIR="$SKILL_DIR" "$PY" - <<'PYEOF'
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+skill = os.environ["PF_SKILL_DIR"]
+script = f"{skill}/portfolio_organizer.py"
+
+
+def run(root):
+    r = subprocess.run([sys.executable, script, "scan", "--root", root, "--json"],
+                       capture_output=True, encoding="utf-8", errors="replace")
+    assert r.returncode == 0, (r.returncode, r.stderr[-400:])
+    return json.loads(r.stdout)
+
+
+# chmod 000 在 Windows 上不产生同样的效果(os.chmod 只改只读位),scandir 不会
+# 抛 PermissionError,所以这一段在 Windows 上**跳过并明说**,不静默通过。
+if os.name == "nt":
+    print("  ⊘ F5 权限段在 Windows 上跳过(chmod 000 不产生 scandir 失败)")
+else:
+    root = tempfile.mkdtemp(prefix="pf-f5.")
+    try:
+        locked = os.path.join(root, "2024_锁定项目")
+        real_empty = os.path.join(root, "2024_真空项目")
+        normal = os.path.join(root, "2024_正常项目")
+        for d in (locked, real_empty, normal):
+            os.makedirs(d)
+        # 关键:锁住的项目里放**真实数据**,这样「报成空项目」才是可检出的错误
+        with open(os.path.join(locked, "big.psd"), "wb") as fh:
+            fh.write(b"D" * 5_000_000)
+        with open(os.path.join(normal, "design.psd"), "wb") as fh:
+            fh.write(b"A" * 2000)
+        os.chmod(locked, 0o000)
+
+        d = run(root)
+        s = d["stats"]
+        # 1) 读失败必须可见:errors 通道 + 专门计数
+        assert "errors" in d, sorted(d)
+        assert len(d["errors"]) >= 1, d["errors"]
+        assert any(e["path"] == "2024_锁定项目" for e in d["errors"]), d["errors"]
+        assert s["unreadable_projects"] == 1, s
+        # 2) 读不了的项目**不能**收到「空项目目录(建议删除)」这条删除引导
+        by = {}
+        for i in d["issues"]:
+            by.setdefault(i["path"], []).append(i["problems"][0])
+        assert not any("空项目目录" in p for p in by.get("2024_锁定项目", [])), by
+        assert any("无法读取" in p for p in by.get("2024_锁定项目", [])), by
+        # 3) 真正的空项目**仍然**被判空(负控制:别把修复做成「不再报空项目」)
+        assert any("空项目目录" in p for p in by.get("2024_真空项目", [])), by
+        # 4) 读不了的 5MB 不能被算进总量
+        assert s["total_size_bytes"] == 2000, s
+        assert s["projects"] == 3, s
+    finally:
+        os.chmod(os.path.join(root, "2024_锁定项目"), 0o755)
+        shutil.rmtree(root, ignore_errors=True)
+    print("  ✓ 读不了的项目:errors 可见、单列 unreadable_projects、"
+          "不再误报「空项目目录(建议删除)」,而真正的空项目仍照报")
+
+# ── 干净树上 errors 必须存在且为空(file-sorter / dedup-finder / backup-auditor 同族约定)──
+clean = tempfile.mkdtemp(prefix="pf-clean.")
+try:
+    os.makedirs(os.path.join(clean, "2024_项目甲"))
+    with open(os.path.join(clean, "2024_项目甲", "cover.jpg"), "wb") as fh:
+        fh.write(b"J" * 1000)
+    d = run(clean)
+    assert d["errors"] == [], d["errors"]
+    assert d["stats"]["unreadable_projects"] == 0, d["stats"]
+    assert d["stats"]["unreadable_files"] == 0, d["stats"]
+    print("  ✓ 干净树:errors 键存在且为 [](与家族一致)")
+finally:
+    shutil.rmtree(clean, ignore_errors=True)
+PYEOF
+
 echo "🎉 所有 smoke test 通过"
