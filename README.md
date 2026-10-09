@@ -297,7 +297,7 @@ For cloud-drive → NAS pipelines, combine with [baidu-pan-skill](https://github
 - [x] Batch glob helpers (`glob()` + `zs rm/mv/cp/down` patterns)
 - [x] Agent skill family: 9 cross-NAS organizers (incl. `file-sorter` for generic type-based archiving) + `nas-report` entry, selective install (`zs skill --list/--only`)
 - [x] Optional EXIF-based photo dating (`photo-organizer --exif`: exiftool → mdls → mtime fallback) — [#14](https://github.com/skyzhao1223/zspace-cli/issues/14)
-- [ ] Per-skill config overrides (whitelist dirs / extension sets) — [#15](https://github.com/skyzhao1223/zspace-cli/issues/15)
+- [ ] Per-skill config overrides (`skills/<name>/config.json`: whitelist dirs / extension rules) — [#15](https://github.com/skyzhao1223/zspace-cli/issues/15) · mechanism shipped for `file-sorter` + `photo-organizer`, 7 skills still to port
 - [x] Growth-trend reports (`nas-report diff` two snapshots: category/dir growth, rate & ETA) — [#16](https://github.com/skyzhao1223/zspace-cli/issues/16)
 
 ---
