@@ -194,7 +194,14 @@ def categorize(name: str, ext: str) -> str:
     """纯函数:按文件名/扩展名给下载文件分类。"""
     if name in JUNK_NAMES or name.startswith("._") or ext in JUNK_EXTS:
         return "junk"
-    if ext in PARTIAL_EXTS or name.endswith(".bt.td"):
+    # `.bt.td` 没有专用条款(家族审计 F6):这里曾写着 or name.endswith(".bt.td"),
+    # 默认配置下它永远不可达(.bt.td 的 ext 必是 td,阶梯上一级就命中);唯一
+    # 可达的路径是用户用 `extension_overrides` 把 td 改判时,它让 x.bt.td 静默留在
+    # partial 而 y.td 变 other,`stats.config` 却宣称覆盖已生效 —— 正是共享
+    # `load_config` 注释里说这套机制必须防止的那种「覆盖看起来没生效」。删掉后
+    # 行为纯由扩展名驱动:.bt.td 仍是 partial(ext=td),覆盖对它一致生效,
+    # a.BT.TD 也不再被大小写敏感的 endswith 漏掉。
+    if ext in PARTIAL_EXTS:
         return "partial"
     if ext in TORRENT_EXTS:
         return "torrent"

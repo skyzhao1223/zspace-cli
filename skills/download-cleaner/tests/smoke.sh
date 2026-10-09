@@ -675,5 +675,57 @@ print("  ✓ _cfg_match 锚定规则:15 条纯函数断言")
 PYEOF
 rm -rf "$CFG_SRC"
 
+echo "=== TEST 8: .bt.td 无专用条款,extension_overrides 对它一致生效(家族审计 F6)==="
+# F6:categorize() 里曾有 or name.endswith(".bt.td")。默认配置下它永远不可达
+# (.bt.td 的 ext 必是 td,上一级已命中),唯一可达路径是把 td 用
+# extension_overrides 改判时它静默反杀覆盖:y.td 变 other 而 x.bt.td 留
+# partial,stats.config 还宣称覆盖生效。本测试钉死两半:默认判 partial 不变,
+# 覆盖后三种拼写一起翻。
+CFG_SRC8="$(mktemp -d /tmp/downloadcl-f6.XXXXXX)"
+mkdir -p "$CFG_SRC8/installed" "$CFG_SRC8/lib"
+cp "$SKILL_DIR/download_cleaner.py" "$CFG_SRC8/installed/"
+DL_F6_SRC="$CFG_SRC8" "$PY" - <<'PYEOF'
+import json
+import os
+import subprocess
+import sys
+
+src = os.environ["DL_F6_SRC"]
+installed = os.path.join(src, "installed")
+script = os.path.join(installed, "download_cleaner.py")
+lib = os.path.join(src, "lib")
+
+for name in ("x.bt.td", "y.td", "a.BT.TD"):
+    with open(os.path.join(lib, name), "wb") as fh:
+        fh.write(b"partial-bytes")
+
+
+def scan():
+    r = subprocess.run([sys.executable, script, "scan", "--root", lib, "--json"],
+                       capture_output=True, encoding="utf-8", errors="replace")
+    assert r.returncode == 0, (r.returncode, r.stderr[-400:])
+    return json.loads(r.stdout)
+
+
+# ---- 默认配置:三种拼写都判 partial(经由 ext=td,不是专用条款)----
+d = scan()
+cats = {i["path"]: i.get("category") for i in d["issues"]}
+assert cats == {"x.bt.td": "partial", "y.td": "partial", "a.BT.TD": "partial"}, cats
+assert not any("config" in str(k) for k in d["stats"]), "无配置文件时不该有 stats.config"
+
+# ---- 覆盖 td -> other:必须一起翻,一个都不能留 ----
+# other 且不老的文件不出 issue(advise 返回 keep),所以断言方式是:
+# 「没有任何文件还留在 partial」——专用条款若复活,x.bt.td 会带着 partial 留在这
+with open(os.path.join(installed, "config.json"), "w", encoding="utf-8") as fh:
+    fh.write('{"extension_overrides": {"td": "other"}}')
+d = scan()
+assert d["stats"]["config"]["extension_overrides"] == {"td": "other"}, d["stats"]
+leftover = {i["path"]: i.get("category") for i in d["issues"]
+            if i.get("category") == "partial"}
+assert not leftover, f"extension_overrides 被 .bt.td 专用条款静默反杀: {leftover}"
+print("  ✓ 默认三种拼写全 partial;td 覆盖后无一残留(专用条款不会复活)")
+PYEOF
+rm -rf "$CFG_SRC8"
+
 echo ""
 echo "🎉 所有 smoke test 通过"
