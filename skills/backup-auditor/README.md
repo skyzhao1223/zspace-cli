@@ -52,7 +52,8 @@ python3 skills/backup-auditor/backup_auditor.py coverage \
 |------|------|--------|
 | scan | 备份陈旧(最新超阈值) | `review-set` |
 | scan | 单版本备份(无冗余) | `review-set` |
-| scan | 空备份(0 字节/0 文件) | `investigate` |
+| scan | 空备份(0 字节/0 文件,**且读得到**) | `investigate` |
+| scan | 无法读取(`OSError`:权限/挂载断连) | `investigate`(体积与文件数**未知**) |
 | scan | 可轮转旧版本(超 keep) | `rotate-out` |
 | coverage | 关键目录无备份 | `add-backup` |
 | coverage | 有备份但陈旧 | `refresh-backup` |
@@ -270,6 +271,53 @@ fixture 里有两个坑值得记:**目录 mtime 必须在里面所有文件写�
 
 **未覆盖**:真实 SMB 挂载上的性能;真实备份集的命名分布(`base_key` 启发式是按常见
 命名写的);Windows 路径语义;`dir_size` 的 20000 文件上限触顶时的行为。
+
+## 读失败与符号链接:两处修复的根因
+
+这两处是同一类错误的两个方向 —— **把「不知道」当成「没有」**,和**把「不属于这里」
+当成「属于这里」**。都是跨 scanner 一致性审计时发现的,不是用户报的。
+
+### 1. 读不了的目录曾被报成「空备份(疑似失败)」
+
+`dir_size()` 里是 `except OSError: continue` —— 静默吞掉。于是 `chmod 000` 的目录
+返回 `(0, 0)`,与真正的空目录**在数值上完全无法区分**,`_group_sets()` 那边就把它归进
+`empty`,发出本 skill **优先级最高**的告警「空备份项(0 字节/0 文件,疑似失败)」。
+
+实测(修复前):一个 `chmod 000` 但内含 5 MB 真实数据的备份项,产出的 `stats` 与
+`issues` 与真正的空目录**逐字节相同**,`total_size_bytes` 少 5 MB,stderr **零**提示,
+JSON 里连 `errors` 键都没有 —— 而 file-sorter 与 dedup-finder 早就有这个键。
+危险在于:用户会去"修"或删一个其实完好的备份。
+
+修复:`dir_size()` 增加 `errors` 出参,把 `scandir` 与 `stat` 的 `OSError` 都记下来;
+条目带 `unreadable` 标记;`empty` 判定排除它们,另发一类
+`无法读取(权限不足或挂载断连),体积与文件数未知 —— 不等于空备份,别据此删除`;
+JSON 顶层**总是**输出 `errors`(干净时 `[]`,与另两个 scanner 同族约定),
+人类报告加 `⚠️ 读取失败 N 项` 段;`stats` 加 `unreadable_items`。
+读不了的项不计入 `total_size_bytes`(大小未知,算 0 会低报,估算又是假精确)。
+
+### 2. 顶层符号链接曾被跟随,把 `--root` 之外的数据算进来
+
+`_collect_items()` 没有 `is_symlink()` 守卫,而 `entry.stat()` 与 `entry.is_dir()`
+都会跟随链接。**同一个文件的 `dir_size()` 第 228 行却有守卫** —— 所以此前是
+「跟顶层、不跟嵌套」的自相矛盾状态,而那个嵌套守卫恰好是 `selflink -> .` 不挂死的
+唯一原因。
+
+实测(修复前):备份根里只有 3000 字节真实数据 + 一个指向外部的符号链接
+(链接目标含 900000 字节),`total_size_bytes` 报 **903000**,还凭空多出 1 个
+"备份项"和 1 个"备份集"。`coverage` 的 `top_dirs()` 同样跟随,一个只含符号链接的
+源根会报 `source_dirs: 1`。其余 8 个 scanner 在同一 fixture 上都是 3000 字节。
+
+修复:`_collect_items()` 与 `top_dirs()` 各加一行 `is_symlink()` 跳过,与家族一致。
+代价写进了 SKILL.md「关键约束」:用符号链接组织的备份库,链接内容不被审计。
+
+### 这两处都会改变输出
+
+所以「与 main 逐字节一致」**不是**这两个 fixture 的有效验收标准(与 #58 同理)。
+有效的是:干净树上的输出不变(`errors: []`、`unreadable_items: 0`),
+以及**变化量**可断言。TEST 8 就是这么写的,并且 7 个变异全部被抓到:
+回退 F1 的错误记录、让 `empty` 重新包含读失败项、去掉顶层符号链接守卫、
+JSON 不再输出 `errors`、去掉 `top_dirs` 的守卫、`unreadable_items` 永不递增、
+把「无法读取」文案改回「空备份项」。
 
 ## 已知 gap
 

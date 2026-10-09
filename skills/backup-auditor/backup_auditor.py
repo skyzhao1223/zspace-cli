@@ -207,7 +207,8 @@ def parse_backup_name(name: str) -> tuple[str, str | None, int | None]:
 
 
 def dir_size(path: Path | str, max_files: int = 20000,
-             rel_parts: list[str] | None = None) -> tuple[int, int]:
+             rel_parts: list[str] | None = None,
+             errors: list[dict] | None = None) -> tuple[int, int]:
     """递归求目录 (字节数, 文件数);带文件数上限防止超大目录卡死。
 
     rel_parts 是 path 相对**备份根**的目录层级,只为让 config.json 的
@@ -222,7 +223,13 @@ def dir_size(path: Path | str, max_files: int = 20000,
         cur, cur_rel = stack.pop()
         try:
             entries = list(os.scandir(cur))
-        except OSError:
+        except OSError as e:
+            # 读不了(权限不足 / 挂载断连)时只能返回 0,而 0 与「真正的空目录」
+            # 无法区分。所以必须把失败**报出去**,否则调用方会把一个完好的备份
+            # 判成「空备份项,疑似失败」——那是本 skill 优先级最高的告警。
+            if errors is not None:
+                errors.append({"path": "/".join(cur_rel) or str(cur),
+                               "error": f"{type(e).__name__}: {e}"})
             continue
         for e in entries:
             if e.is_symlink():
@@ -240,8 +247,10 @@ def dir_size(path: Path | str, max_files: int = 20000,
                     return total, count
                 try:
                     total += e.stat().st_size
-                except OSError:
-                    pass
+                except OSError as ex:
+                    if errors is not None:
+                        errors.append({"path": "/".join(cur_rel + [e.name]),
+                                       "error": f"{type(ex).__name__}: {ex}"})
     return total, count
 
 
@@ -250,6 +259,9 @@ class Auditor:
         self.stale_days = stale_days
         self.keep = keep
         self._cfg_skipped_dirs = 0   # 因 config skip_dirs 未纳入的目录数
+        # 读取失败通道。file-sorter 与 dedup-finder 都有同名同义的 errors 键
+        # (且总是输出,干净时为 []),本 skill 此前独缺,于是权限错误完全不可见。
+        self.errors: list[dict] = []
 
     # -- 收集备份项 ----------------------------------------------------
 
@@ -266,16 +278,27 @@ class Auditor:
             if _cfg_match([name], CONFIG_SKIP):
                 self._cfg_skipped_dirs += 1
                 continue
+            if entry.is_symlink():
+                # 跟随符号链接会把 --root **之外**的数据算进 total_size_bytes
+                # (实测:3000 字节的备份根报成 903000),selflink -> . 还会重复
+                # 计数。dir_size() 内部第 228 行本来就跳过符号链接,所以此前是
+                # 「跟顶层、不跟嵌套」自相矛盾;这里补齐,与其余 8 个 scanner 一致。
+                continue
             try:
                 st = entry.stat()
-            except OSError:
+            except OSError as e:
+                self.errors.append({"path": name,
+                                    "error": f"{type(e).__name__}: {e}"})
                 continue
+            item_errs: list[dict] = []
             if entry.is_dir():
-                size, fcount = dir_size(entry.path, rel_parts=[name])
+                size, fcount = dir_size(entry.path, rel_parts=[name],
+                                        errors=item_errs)
             elif entry.is_file():
                 size, fcount = st.st_size, 1
             else:
                 continue
+            self.errors.extend(item_errs)
             base_key, date, version = parse_backup_name(name)
             items.append({
                 "name": name,
@@ -290,6 +313,9 @@ class Auditor:
                 "version": version,
                 "base_key": base_key,
                 "is_backup_named": bool(BACKUP_HINT_RE.search(name)),
+                # 读失败过 → 它的 size/file_count 是「未知」而不是「0」,
+                # 不能参与空备份判定
+                "unreadable": bool(item_errs),
             })
         return items
 
@@ -318,7 +344,7 @@ class Auditor:
             "total_size_bytes": sum(i["size"] for i in items),
             "stale_sets": 0, "single_version_sets": 0, "empty_items": 0,
             "rotatable_versions": 0, "reclaimable_bytes": 0,
-            "multi_version_sets": 0,
+            "multi_version_sets": 0, "unreadable_items": 0,
         }
 
         for base_key, members in sorted(sets.items()):
@@ -342,8 +368,25 @@ class Auditor:
             if len(members) > 1:
                 stats["multi_version_sets"] += 1
 
+            # 读不了的备份项:**不等于空备份**。dir_size() 遇到 OSError 只能
+            # 返回 (0, 0),与真正的空目录在数值上无法区分,所以必须靠 unreadable
+            # 标记把它们分开 —— 否则一个只是权限不足/挂载断连的完好备份会收到
+            # 本 skill 优先级最高的「疑似备份失败」告警,用户可能据此去删它。
+            unreadable = [m for m in members if m.get("unreadable")]
+            if unreadable:
+                stats["unreadable_items"] += len(unreadable)
+                for m in unreadable:
+                    issues.append({
+                        "path": m["rel"], "name": m["name"], "is_dir": m["is_dir"],
+                        "problems": ["无法读取(权限不足或挂载断连),体积与文件数未知"
+                                     " —— 不等于空备份,别据此删除"],
+                        "action": "investigate", "set": base_key, "size": m["size"],
+                    })
+
             # 空备份项
-            empty = [m for m in members if m["file_count"] == 0 or m["size"] == 0]
+            empty = [m for m in members
+                     if not m.get("unreadable")
+                     and (m["file_count"] == 0 or m["size"] == 0)]
             if empty:
                 stats["empty_items"] += len(empty)
                 for m in empty:
@@ -391,6 +434,7 @@ class Auditor:
             "params": {"stale_days": self.stale_days, "keep": self.keep},
             "generated_at": now.isoformat(timespec="seconds"),
             "stats": stats, "count": len(issues), "issues": issues,
+            "errors": self.errors[:50],
         }
 
     # -- coverage:关键目录覆盖核对 ------------------------------------
@@ -405,7 +449,9 @@ class Auditor:
         def top_dirs(root: Path) -> dict[str, str]:
             out: dict[str, str] = {}
             for e in sorted(os.scandir(root), key=lambda x: x.name):
-                if not e.is_dir() or e.name in SKIP_DIRS \
+                # 与 _collect_items 一致:不跟随符号链接,否则「源目录」里可能
+                # 全是指向别处的链接,coverage 会报出根本不存在的覆盖率
+                if e.is_symlink() or not e.is_dir() or e.name in SKIP_DIRS \
                         or e.name.startswith("."):
                     continue
                 if _cfg_match([e.name], CONFIG_SKIP):
@@ -484,6 +530,7 @@ class Auditor:
             "params": {"stale_days": self.stale_days},
             "generated_at": now.isoformat(timespec="seconds"),
             "stats": stats, "count": len(issues), "issues": issues,
+            "errors": self.errors[:50],
         }
 
 
@@ -523,6 +570,18 @@ def _print_config(s: dict) -> None:
     print(f"  因 skip_dirs 未纳入的目录: {cfg.get('skipped_dirs', 0)} 个")
 
 
+def _print_errors(result: dict) -> None:
+    """打印读取失败明细。措辞与 file-sorter / dedup-finder 保持一致。"""
+    errs = result.get("errors") or []
+    if not errs:
+        return
+    print(f"\n⚠️ 读取失败 {len(errs)} 项(权限/挂载断连):")
+    for e in errs[:5]:
+        print(f"  {e['path']}: {e['error']}")
+    if len(errs) > 5:
+        print(f"  …另有 {len(errs) - 5} 项,完整清单见 --json 的 errors 键")
+
+
 def _print_scan(result: dict, top: int) -> None:
     s = result["stats"]
     p = result["params"]
@@ -535,9 +594,13 @@ def _print_scan(result: dict, top: int) -> None:
           f"| 总大小 {_human(s['total_size_bytes'])}")
     print(f"多版本集 {s['multi_version_sets']} | 单版本集 {s['single_version_sets']} "
           f"| 陈旧集 {s['stale_sets']} | 空备份 {s['empty_items']}")
+    if s.get("unreadable_items"):
+        print(f"⚠️  读不了的备份项 {s['unreadable_items']} 个"
+              f"(权限/挂载断连) —— 体积与文件数未知,**不计入空备份**")
     print(f"可轮转旧版本 {s['rotatable_versions']} "
           f"(可回收约 {_human(s['reclaimable_bytes'])})")
     _print_config(s)
+    _print_errors(result)
 
     issues = result["issues"]
     if not issues:
@@ -570,6 +633,7 @@ def _print_coverage(result: dict, top: int) -> None:
     print(f"已覆盖 {s['covered']} | 缺失 {s['missing']} "
           f"| 陈旧 {s['stale']} | 孤儿备份 {s['orphan']}")
     _print_config(s)
+    _print_errors(result)
     issues = result["issues"]
     if not issues:
         print("\n✅ 所有关键目录都有新鲜备份!")
