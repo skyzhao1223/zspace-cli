@@ -18,12 +18,14 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import re
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import NoReturn
 
 MAX_DEPTH = 4
 
@@ -46,6 +48,125 @@ VERSION_RE = re.compile(r"[-_ ]?[vV](\d+)$|[-_ ]?(\d{1,3})$|备份(\d+)$|副本(
 BACKUP_HINT_RE = re.compile(
     r"备份|backup|bak|快照|snapshot|镜像|时间机器|time\s?machine|归档", re.I
 )
+
+# ── 可选覆盖层:config.json(与本脚本同目录)────────────────────────────
+# 「装 skill」是逐目录 copytree(cli.py 的 zs skill,加 --only 也一样),共享模块
+# 装不进用户目录,所以这一段在每个 scanner 里逐字重复 —— 要改就全局搜索替换,
+# 别只改一处。per-skill 的只有紧跟其后的 CONFIG_KEYS 和它点到的那张表。
+CONFIG_NAME = "config.json"
+CONFIG_KEYS = ("skip_dirs", "extension_overrides")
+CONFIG_SKIP: list[str] = []           # skip_dirs 追加到这里(扩展内置 SKIP_DIRS)
+CONFIG_INFO: dict[str, object] = {}   # 非空 = 真加载了配置,回写进 stats 供核对
+# 类别名 → 本 skill 的扩展名集合;值为 None 表示「不属于任何集合」,即兜底类别。
+CONFIG_EXT_TABLES: dict[str, set[str] | None] = {
+    "archive": ARCHIVE_EXTS, "non_archive": None,
+}
+
+
+def _cfg_die(path: Path, msg: str) -> NoReturn:
+    """配置有问题就**立刻退出**,并指名是哪个文件、哪个键。
+
+    静默忽略一份用户以为生效了的配置是最坏的失败方式:扫描会继续按内置规则出
+    结果,而且不给任何解释。
+    """
+    raise SystemExit(f"❌ 配置文件 {path} 无效:{msg}")
+
+
+def _cfg_match(rel_parts: list[str], patterns: list[str]) -> bool:
+    """目录是否命中 skip_dirs 模式。锚定在被扫描的根目录,大小写不敏感。
+
+    模式匹配「整段相对路径」**或**「任一级目录名」即命中,fnmatch 的 `*` 会跨过
+    `/`。所以 `临时/*` 命中 <root>/临时/2024,但不命中 <root>/x/临时;不含
+    `/` 的 `临时` 命中任意深度的同名目录。命中一个目录即命中它的整棵子树。
+    绝对路径永远匹配不上,load_config 会直接报错而不是让你以为它生效了。
+    """
+    if not patterns or not rel_parts:
+        return False
+    joined = "/".join(rel_parts).lower()
+    for pat in patterns:
+        low = pat.lower()
+        if fnmatch.fnmatch(joined, low):
+            return True
+        if any(fnmatch.fnmatch(p.lower(), low) for p in rel_parts):
+            return True
+    return False
+
+
+def load_config(script_dir: Path | None = None) -> None:
+    """读同目录的 config.json,把两个键**并入**内置默认值(不替换)。
+
+    文件不存在 → 立刻返回:没有 config.json 时本 scanner 的输出与引入这段代码
+    之前**逐字节一致**。合并语义、模式锚定规则、报错行为逐条写在 SKILL.md 的
+    「配置覆盖(config.json)」一节。校验全部跑完才动手改内置集合 —— 半途退出
+    会留下一张只改了一半的表,那比直接报错难查得多。
+    """
+    path = (script_dir or Path(__file__).resolve().parent) / CONFIG_NAME
+    if not path.is_file():
+        return
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as e:
+        _cfg_die(path, f"读不了这个文件:{e}")
+    except ValueError as e:
+        _cfg_die(path, f"不是合法 JSON(空文件也算):{e}")
+    if not isinstance(raw, dict):
+        _cfg_die(path, f"顶层必须是 JSON 对象,实际是 {type(raw).__name__}")
+    unknown = sorted(set(raw) - set(CONFIG_KEYS))
+    if unknown:
+        _cfg_die(path, f"未知键 {', '.join(unknown)};可用键只有 "
+                 f"{', '.join(CONFIG_KEYS)}。宁可报错也不警告后忽略 —— 键名拼错"
+                 "一个字母就会让整份配置静默失效,而用户看不出任何区别")
+    skip = raw.get("skip_dirs", [])
+    if not isinstance(skip, list):
+        _cfg_die(path, f"skip_dirs 必须是字符串数组,实际是 "
+                 f"{type(skip).__name__}(只有一条也要写成 [\"临时\"])")
+    for i, item in enumerate(skip):
+        if not isinstance(item, str):
+            _cfg_die(path, f"skip_dirs[{i}] 必须是字符串,实际是 "
+                     f"{type(item).__name__}")
+        pat = item.strip()
+        if not pat:
+            _cfg_die(path, f"skip_dirs[{i}] 是空字符串")
+        if pat.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:[\\/]", pat):
+            _cfg_die(path, f"skip_dirs[{i}] 写成了绝对路径 {item!r};"
+                     "模式锚定在被扫描的根目录,只能写相对路径(如 临时/*)")
+    ext = raw.get("extension_overrides", {})
+    if not isinstance(ext, dict):
+        _cfg_die(path, f"extension_overrides 必须是对象,实际是 "
+                 f"{type(ext).__name__}")
+    pairs: list[tuple[str, str]] = []
+    for key, cat in ext.items():
+        if not isinstance(cat, str):
+            _cfg_die(path, f"extension_overrides[{key!r}] 必须是字符串类别名,"
+                     f"实际是 {type(cat).__name__}")
+        e = key.strip().lstrip(".").lower()
+        if not e:
+            _cfg_die(path, f"extension_overrides 的键 {key!r} 归一化后是空的")
+        if "." in e:
+            _cfg_die(path, f"extension_overrides 的键 {key!r} 含多个点:扩展名只取"
+                     f"文件名最后一段(tar.gz 的扩展名是 gz),请写成 "
+                     f"{e.rsplit('.', 1)[-1]!r}")
+        if cat not in CONFIG_EXT_TABLES:
+            _cfg_die(path, f"extension_overrides[{key!r}] 的类别 {cat!r} 本 skill "
+                     f"不认识;可用类别:{', '.join(sorted(CONFIG_EXT_TABLES))}")
+        pairs.append((e, cat))
+    # 校验全过才动手。扩展名先从别的表里摘掉再放进指定的那一张,否则判定阶梯
+    # 会按它自己的顺序命中旧类别,覆盖看起来完全没生效。
+    CONFIG_SKIP.extend(item.strip() for item in skip)
+    for e, cat in pairs:
+        for name, table in CONFIG_EXT_TABLES.items():
+            if table is not None and name != cat:
+                table.discard(e)
+        target = CONFIG_EXT_TABLES[cat]
+        if target is not None:
+            target.add(e)
+    CONFIG_INFO.update({
+        "path": str(path),
+        "skip_dirs": list(CONFIG_SKIP),
+        "extension_overrides": dict(pairs),
+    })
+    print(f"ℹ️ 已加载覆盖配置 {path}(skip_dirs {len(skip)} 条,"
+          f"extension_overrides {len(pairs)} 条)", file=sys.stderr)
 
 
 def strip_archive_ext(name: str) -> str:
@@ -85,12 +206,20 @@ def parse_backup_name(name: str) -> tuple[str, str | None, int | None]:
     return base_key or stem.lower(), date, version
 
 
-def dir_size(path: Path | str, max_files: int = 20000) -> tuple[int, int]:
-    """递归求目录 (字节数, 文件数);带文件数上限防止超大目录卡死。"""
+def dir_size(path: Path | str, max_files: int = 20000,
+             rel_parts: list[str] | None = None) -> tuple[int, int]:
+    """递归求目录 (字节数, 文件数);带文件数上限防止超大目录卡死。
+
+    rel_parts 是 path 相对**备份根**的目录层级,只为让 config.json 的
+    skip_dirs 在这一层也生效(锚定方式与 _collect_items 一致):内置的
+    SKIP_DIRS 本来就在这里被跳过,配置项要是不跟着跳,同一个键在一个
+    skill 内部就有两种语义。没有配置时 _cfg_match 的卫语句立刻返回
+    False,遍历顺序与返回值都不变。
+    """
     total, count = 0, 0
-    stack = [path]
+    stack: list[tuple[Path | str, list[str]]] = [(path, list(rel_parts or []))]
     while stack:
-        cur = stack.pop()
+        cur, cur_rel = stack.pop()
         try:
             entries = list(os.scandir(cur))
         except OSError:
@@ -101,7 +230,10 @@ def dir_size(path: Path | str, max_files: int = 20000) -> tuple[int, int]:
             if e.is_dir():
                 if e.name in SKIP_DIRS or e.name.startswith("."):
                     continue
-                stack.append(e.path)
+                child_rel = cur_rel + [e.name]
+                if _cfg_match(child_rel, CONFIG_SKIP):
+                    continue
+                stack.append((e.path, child_rel))
             elif e.is_file():
                 count += 1
                 if count > max_files:
@@ -117,6 +249,7 @@ class Auditor:
     def __init__(self, stale_days: int, keep: int) -> None:
         self.stale_days = stale_days
         self.keep = keep
+        self._cfg_skipped_dirs = 0   # 因 config skip_dirs 未纳入的目录数
 
     # -- 收集备份项 ----------------------------------------------------
 
@@ -130,12 +263,15 @@ class Auditor:
             name = entry.name
             if name in SKIP_DIRS or name.startswith("."):
                 continue
+            if _cfg_match([name], CONFIG_SKIP):
+                self._cfg_skipped_dirs += 1
+                continue
             try:
                 st = entry.stat()
             except OSError:
                 continue
             if entry.is_dir():
-                size, fcount = dir_size(entry.path)
+                size, fcount = dir_size(entry.path, rel_parts=[name])
             elif entry.is_file():
                 size, fcount = st.st_size, 1
             else:
@@ -176,7 +312,7 @@ class Auditor:
         now = datetime.now()
 
         issues: list[dict] = []
-        stats = {
+        stats: dict = {
             "backup_items": len(items),
             "backup_sets": len(sets),
             "total_size_bytes": sum(i["size"] for i in items),
@@ -240,6 +376,11 @@ class Auditor:
                     "size": set_size, "newest": newest["mtime_date"],
                 })
 
+        if CONFIG_INFO:
+            # 只在真加载了 config.json 时才多这一个键(与 photo-organizer 的
+            # --exif 同一个手法),没有配置文件时 JSON 与引入覆盖层之前逐字节一致
+            stats["config"] = {**CONFIG_INFO,
+                               "skipped_dirs": self._cfg_skipped_dirs}
         print(
             f'审计完成: {stats["backup_sets"]} 个备份集, '
             f'{stats["backup_items"]} 个备份项\n', file=sys.stderr,
@@ -264,10 +405,14 @@ class Auditor:
         def top_dirs(root: Path) -> dict[str, str]:
             out: dict[str, str] = {}
             for e in sorted(os.scandir(root), key=lambda x: x.name):
-                if e.is_dir() and e.name not in SKIP_DIRS \
-                        and not e.name.startswith("."):
-                    key = re.sub(r"[\s_\-.]+", "", e.name).lower()
-                    out[key] = e.name
+                if not e.is_dir() or e.name in SKIP_DIRS \
+                        or e.name.startswith("."):
+                    continue
+                if _cfg_match([e.name], CONFIG_SKIP):
+                    self._cfg_skipped_dirs += 1
+                    continue
+                key = re.sub(r"[\s_\-.]+", "", e.name).lower()
+                out[key] = e.name
             return out
 
         src_dirs = top_dirs(source_root)
@@ -319,11 +464,16 @@ class Auditor:
                     "action": "review-orphan", "size": latest["size"],
                 })
 
-        stats = {
+        stats: dict = {
             "source_dirs": len(src_dirs), "backup_sets": len(backup_sets),
             "covered": covered, "missing": missing, "orphan": orphan,
             "stale": stale,
         }
+        if CONFIG_INFO:
+            # 只在真加载了 config.json 时才多这一个键(与 photo-organizer 的
+            # --exif 同一个手法),没有配置文件时 JSON 与引入覆盖层之前逐字节一致
+            stats["config"] = {**CONFIG_INFO,
+                               "skipped_dirs": self._cfg_skipped_dirs}
         print(
             f'核对完成: {covered} 已覆盖, {missing} 缺失, '
             f'{stale} 陈旧, {orphan} 孤儿\n', file=sys.stderr,
@@ -345,6 +495,34 @@ def _human(n: float) -> str:
     return f"{n:.1f} TB"
 
 
+def _print_config(s: dict) -> None:
+    """把生效的覆盖配置打进人类报告 —— 「哪份配置在生效」必须一眼可查。
+
+    三个 scanner 里 dedup-finder 的输出是删除计划,而 prefer_keep_hints 能反转
+    「重复组里保留哪个」,所以生效的提示词尤其不能只躺在 JSON 里。没有加载配置
+    时一个字都不打印:人类报告与引入覆盖层之前逐字节一致。
+    """
+    cfg: dict = s.get("config") or {}
+    if not cfg:
+        return
+    print(f"\n⚙ 已加载覆盖配置 {cfg['path']}")
+    for key in CONFIG_KEYS:
+        val = cfg.get(key)
+        if not val:
+            continue
+        if isinstance(val, list):
+            shown = ", ".join(val)
+        elif isinstance(val, dict):
+            shown = ", ".join(f"{k}→{v}" for k, v in val.items())
+        else:
+            shown = str(val)
+        print(f"  {key}: {shown}")
+    if cfg.get("prefer_keep_hints_effective"):
+        print("  保留提示词生效全集(内置 + 本次追加,决定重复组里先保留哪个):")
+        print(f"    {', '.join(cfg['prefer_keep_hints_effective'])}")
+    print(f"  因 skip_dirs 未纳入的目录: {cfg.get('skipped_dirs', 0)} 个")
+
+
 def _print_scan(result: dict, top: int) -> None:
     s = result["stats"]
     p = result["params"]
@@ -359,6 +537,7 @@ def _print_scan(result: dict, top: int) -> None:
           f"| 陈旧集 {s['stale_sets']} | 空备份 {s['empty_items']}")
     print(f"可轮转旧版本 {s['rotatable_versions']} "
           f"(可回收约 {_human(s['reclaimable_bytes'])})")
+    _print_config(s)
 
     issues = result["issues"]
     if not issues:
@@ -390,6 +569,7 @@ def _print_coverage(result: dict, top: int) -> None:
     print(f"源关键目录 {s['source_dirs']} | 备份集 {s['backup_sets']}")
     print(f"已覆盖 {s['covered']} | 缺失 {s['missing']} "
           f"| 陈旧 {s['stale']} | 孤儿备份 {s['orphan']}")
+    _print_config(s)
     issues = result["issues"]
     if not issues:
         print("\n✅ 所有关键目录都有新鲜备份!")
@@ -456,6 +636,11 @@ def main() -> None:
     cov_p.add_argument("--top", type=int, default=10, help="每类显示条数")
 
     args = parser.parse_args()
+
+    # 可选覆盖层:同目录 config.json。没有这个文件时下面这行什么都不做,
+    # 内置的 SKIP_DIRS 与 ARCHIVE_EXTS 一个都不变,输出与引入覆盖层之前逐字节一致。
+    load_config()
+
     if args.cmd == "scan":
         auditor = Auditor(args.stale_days, args.keep)
         result = auditor.scan(Path(args.root).resolve())

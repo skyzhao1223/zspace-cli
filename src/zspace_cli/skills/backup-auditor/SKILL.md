@@ -35,6 +35,7 @@ python3 --version               # ≥3.9,无第三方依赖
 | `scan --root BACKUP --stale-days 35 --keep 3` | 自定义陈旧阈值与保留份数 |
 | `coverage --source DATA --backup BACKUP` | 关键目录有无备份核对(只读) |
 | `--json --output F` | JSON 输出 |
+| 同目录 `config.json` | 可选覆盖层:`skip_dirs` + `extension_overrides`(见下「配置覆盖」) |
 
 ```bash
 # 备份集审计:最新超过 35 天算陈旧,每组保留最近 3 份
@@ -43,6 +44,190 @@ python3 backup_auditor.py scan --root /Volumes/nas/备份
 # 覆盖核对:源 data 下的关键目录是否都有备份
 python3 backup_auditor.py coverage --source /Volumes/nas/data --backup /Volumes/nas/备份
 ```
+
+## 配置覆盖(`config.json`,可选)
+
+备份目录里总有**不该被审计的东西**:备份工具自己的暂存区、一个当仓库用的
+`临时暂存/`、某种内部审计脚本不认识扩展名的私有归档格式。没有这个机制之前,唯一
+的办法是改脚本里的 `SKIP_DIRS` / `ARCHIVE_EXTS` —— 而下次 `pip install -U` 就把
+它冲掉了。
+
+**没有这个文件时,本 skill 两个子命令的输出都与引入该机制之前逐字节一致** ——
+不多一个 JSON 字段、不少一条审计项。
+
+### 本 skill 接受哪些键
+
+只有两个。**顶层出现第三个键 → 直接报错退出。**
+
+| 键 | 类型 | 作用 |
+|----|------|------|
+| `skip_dirs` | `string[]` | **追加**到内置 `SKIP_DIRS`;命中的目录**整棵不进入**(见下「作用在哪三层」) |
+| `extension_overrides` | `object` | **逐扩展名改判**:该扩展名先从 `ARCHIVE_EXTS` 里摘掉,再按你写的类别放回去 |
+
+> **刻意没有 `whitelist_dirs`。** 那个键在 file-sorter / photo-organizer 里的语义
+> 是「**视为合规 / 不要报**」—— 它喂的是那两个 skill 的**合规豁免**机制。本 skill
+> 不判合规:它审的是「备份新不新鲜、有没有冗余、关键目录漏没漏」,`--keep N` 是
+> **版本保留数**,不是目录白名单。同一个键名在不同 skill 里含义不同,用户把配置从
+> 一个 skill 复制到另一个就会得到**静默的意外行为**,所以这里只暴露本 skill 真正有
+> 的机制,并照它本来的样子命名:`skip_dirs`。
+>
+> 照抄别的 skill 的配置会被明确拒绝(`whitelist_dirs`、`prefer_keep_hints` 都试过),
+> 报错里列出本 skill 的可用键。
+
+### 放在哪
+
+`config.json` 按 **脚本自己所在的目录**(`__file__`)解析,**不是** cwd、**也不是**
+`--root` / `--source` / `--backup`:
+
+```
+skills/backup-auditor/         ← zs skill 装好后就是你项目里的那一份
+├── backup_auditor.py
+├── config.json                ← 放这里
+└── SKILL.md
+```
+
+按 `__file__` 解析是刻意的:被审计的备份目录里万一躺着一个 `config.json`(备份集
+本身就是一个代码目录、或者用户把配置和数据放一起了),它只会被当成一个**普通的
+备份项**统计进去,不会被读成配置。配置跟着**安装**走,不跟着**数据**走。
+
+### Schema
+
+两个键都可选;只写一个,另一个不产生任何影响。
+
+```jsonc
+{
+  // 整棵不进入的目录(fnmatch 模式,锚定在 --root / --source / --backup)
+  "skip_dirs": ["临时暂存", "备份工具缓存/*"],
+
+  // 扩展名改判。本 skill 只有两张「表」:archive 与它的兜底 non_archive
+  "extension_overrides": {
+    "mybak": "archive",      // 内部审计脚本不认的私有归档扩展名
+    "iso":   "non_archive"   // 反过来:别再把它当归档扩展名剥掉
+  }
+}
+```
+
+`extension_overrides` 的可用类别名**只有两个**:
+
+| 类别名 | 含义 |
+|--------|------|
+| `archive` | 进 `ARCHIVE_EXTS`,`parse_backup_name()` 会把它当归档扩展名**剥掉**再算 `base_key` |
+| `non_archive` | 兜底:从 `ARCHIVE_EXTS` 里**摘掉**,扩展名留在名字里参与 `base_key` |
+
+这直接影响**备份集怎么聚合**,所以它是本 skill 里最有用的一个覆盖:
+
+```
+数据.mybak  数据_v2.mybak
+  内置:base_key = 数据mybak / 数据v2mybak  → 两个**单版本**集(各报一条「无历史冗余」)
+  {"mybak": "archive"}:base_key = 数据 / 数据(version 2) → 一个**双版本**集
+                                                    → --keep 1 时正确轮转出旧的那份
+```
+
+写成别的名字(比如 file-sorter 才有的 `backup`、`other`)会报错,并在报错里列出
+本 skill 仅有的这两个类别。
+
+**改不了的**:`.tar.gz` / `.tar.bz2` / `.tar.xz` / `.sparsebundle` 这四个**双扩展名**
+是硬编码的、并且在 `ARCHIVE_EXTS` 之前匹配 —— 所以 `{"gz": "non_archive"}` **不会**
+让 `照片备份.tar.gz` 停止被剥离。同理不可配置:`DATE_RE` / `TIME_SUFFIX_RE` /
+`VERSION_RE` / `BACKUP_HINT_RE` 这四条识别备份集的正则、`--keep` 与 `--stale-days`
+的默认值、`dir_size` 的 20000 文件上限。这些改动会**改变备份集怎么被聚合**,是比
+「扩展名归类」大得多的设计问题,应该单独讨论而不是塞进配置层。
+
+### `skip_dirs` 作用在哪三层
+
+本 skill 有三个地方在遍历目录,三层都吃同一个 `skip_dirs`(否则同一个键在一个
+skill 内部就有两种语义):
+
+| 层 | 作用 | 计入 `stats.config.skipped_dirs` |
+|----|------|:--:|
+| `scan` 的备份项收集 | 命中的顶层目录/文件**整个不成为一个备份项** | ✅ |
+| `coverage` 的源目录收集 | 命中的源顶层目录**不再要求有备份**(不计入 `source_dirs`/`missing`) | ✅ |
+| `dir_size` 递归求体积 | 命中的子目录**不计入该备份项的 `size` / `file_count`** | ❌(不单独计数) |
+
+所以 `skipped_dirs` 数的是**审计边界上**被拦下的目录数;`coverage` 模式下是源侧与
+备份侧**合计**。第三层虽然不计数,但确确实实会让体积变小 —— smoke 里是按字节核对
+的。
+
+**一个必须知道的连锁反应**:在 `coverage` 里 `skip_dirs` 掉一个源目录,它对应的
+备份集就失去了匹配对象,于是**变成孤儿备份**(`review-orphan`)。这是正确行为
+(你说了不用管它),但汇报时要一起说,否则用户会以为凭空多出一个孤儿。
+
+### 模式锚定规则(`skip_dirs`)
+
+与 file-sorter / photo-organizer 的 `whitelist_dirs`、以及另两个 scanner 的
+`skip_dirs` 用的是**同一个匹配函数** `_cfg_match()`,规则完全一致:
+
+- `fnmatch` glob(`*` `?` `[seq]`),`*` **会跨过 `/`**
+- **大小写不敏感**(目录名和模式两边都折叠;双向都成立)
+- 匹配对象是**相对根的目录路径**,用 `/` 连接;`scan` 锚在 `--root`,`coverage`
+  的源侧锚在 `--source`、备份侧锚在 `--backup`
+- 命中一个目录 = 它的**整棵子树都不进入**
+- 命中的两条规则是「或」:① 匹配**整段相对路径**;② 匹配**任意一级目录名**
+
+| 模式 | `<bk>/临时暂存/子目录/` | `<bk>/临时暂存/` 自己 | `<bk>/深层/临时暂存/` |
+|------|:--:|:--:|:--:|
+| `临时暂存` | ✅ 规则② | ✅ 规则①② | ✅ 规则②(任意深度) |
+| `临时暂存/*` | ✅ 规则① | ❌ | ❌(相对路径不以 `临时暂存/` 开头) |
+| `深层/临时暂存/*` | ❌ | ❌ | ❌(它下面还得有一层才算) |
+| `深层/临时暂存` | ❌ | ❌ | ✅ 规则① |
+| `*` | ✅ | ✅ | ✅ |
+
+三条边界:
+
+1. **`skip_dirs` 只作用于目录**。直接躺在根下的文件不吃它,连 `*` 也管不到。
+2. **`*` 不是子串**。`skip_dirs: ["照片"]` **不会**顺手剪掉 `照片备份_2024-01-01/`
+   —— 模式是 fnmatch,不是「名字里出现过就算」。这一点在备份目录里特别容易踩,
+   因为备份项的名字通常就是「源目录名 + 备份 + 日期」。
+3. **绝对路径永远匹配不上**,所以写成 `/Volumes/nas/备份/临时暂存` 会**直接报错**,
+   而不是让你以为它生效了。
+
+> **与内置 `SKIP_DIRS` 的一处刻意差别**:内置那张表是**精确目录名、区分大小写**
+> (`name in SKIP_DIRS`);`skip_dirs` 走的是上面那套 **fnmatch + 大小写不敏感**。
+> 这是为了让整个家族的模式语义只有一套,而内置表**一个字都没动** —— 动了就会改变
+> 没有配置时的输出。
+
+### 出错行为
+
+配置文件存在但读不通 → **exit 1**,stderr 里**指名文件路径和出错的那个键**,而
+`--json` 的 stdout 保持干净(错误绝不混进 JSON,Agent 拿到的 stdout 要么是能解析
+的结果、要么是空的)。`scan` 与 `coverage` 两个子命令都是这个行为。
+
+**校验全部跑完才动手改内置集合**:一份「`skip_dirs` 合法、`extension_overrides`
+非法」的配置不会留下半张改过的表,也不会打印「已加载」。
+
+会被拒绝的写法(每一条 × 两个子命令都有 smoke 断言):非法 JSON、**空文件**、
+顶层不是对象、未知键、`skip_dirs` 不是数组 / 元素不是字符串 / 空字符串 / 绝对路径
+(POSIX 与 Windows 盘符两种)、`extension_overrides` 不是对象 / 类别值不是字符串 /
+类别名不存在 / 扩展名含多个点(`tar.gz` —— 扩展名只取文件名最后一段,写 `gz`)/
+扩展名归一化后为空。
+
+### 怎么确认它真的生效了
+
+加载成功时 stderr 打一行(**没有配置文件时这一行不出现**):
+
+```
+ℹ️ 已加载覆盖配置 /…/skills/backup-auditor/config.json(skip_dirs 1 条,extension_overrides 1 条)
+```
+
+`--json` 里也会多一个 `stats.config`,**只有真加载了配置才会出现**(`scan` 与
+`coverage` 都有):
+
+```jsonc
+"config": {
+  "path": "/…/skills/backup-auditor/config.json",
+  "skip_dirs": ["临时暂存"],
+  "extension_overrides": {"mybak": "archive"},
+  "skipped_dirs": 2          // 审计边界上被拦下的目录数(coverage 是源+备份合计)
+}
+```
+
+人类可读报告里也会印一段 `⚙ 已加载覆盖配置 …`,把生效的键值列出来。
+
+反过来说:**结果里没有 `stats.config` 这个键 = 没找到配置文件 = 你的覆盖没生效**,
+先确认它是不是真的躺在 `backup_auditor.py` 旁边(而不是备份目录底下)。
+
+汇报时请把 `backup_items` / `backup_sets` 与 `skipped_dirs` **一起说**:被剪掉的
+目录不计入前两个数字,「备份集怎么变少了」的答案就在第三个里。
 
 ## 备份集识别
 
@@ -150,9 +335,24 @@ python3 backup_auditor.py coverage --source /Volumes/nas/data --backup /Volumes/
 | mtime 不等于备份时间 | SMB 拷贝可能刷新 mtime | 陈旧判定用 mtime,跨机整理时注意;必要时看名字里的日期 |
 | coverage 误报缺失 | 源目录名与备份名差异大 | 双向包含匹配已容忍部分差异;仍误报则人工确认 |
 | 超大备份目录卡住 | dir_size 递归慢 | 内置 20000 文件上限;巨型备份集单独审计 |
+| 写了 `config.json` 但没生效 | `--json` 里没有 `stats.config`,stderr 也没有 `ℹ️ 已加载覆盖配置` | 它必须躺在 **`backup_auditor.py` 旁边**(按 `__file__` 解析),不是 cwd、也不是 `--root`/`--source`/`--backup` |
+| 凭空多出一个孤儿备份 | `coverage` 的 `orphan` +1 | 你 `skip_dirs` 掉了源目录,它对应的备份集就失去了匹配对象 —— 这是正确行为,但汇报时要一起说 |
+| `{"gz": "non_archive"}` 没效果 | `照片备份.tar.gz` 仍然被剥成 `照片备份` | `.tar.gz`/`.tar.bz2`/`.tar.xz`/`.sparsebundle` 是硬编码的双扩展名,并且在 `ARCHIVE_EXTS` **之前**匹配 |
+| 备份项体积莫名变小 | `total_size_bytes` 下降 | `dir_size` 也吃 `skip_dirs`;对照 `stats.config.skipped_dirs` 与你写的模式 |
+| `skip_dirs: ["照片"]` 没保住 `照片备份_2024/` | 备份项还在 | 模式是 fnmatch,不是子串;要写 `照片备份*` 或 `照片*` |
 
 ## 已知 gap
 
+- ~~`SKIP_DIRS` 与 `ARCHIVE_EXTS` 是硬编码的,私有归档格式要改脚本~~ →
+  **已部分解决**(issue #15):同目录 `config.json` 的 `skip_dirs` /
+  `extension_overrides`。仍然硬编码的:`.tar.gz`/`.tar.bz2`/`.tar.xz`/
+  `.sparsebundle` 双扩展名列表、`DATE_RE`/`TIME_SUFFIX_RE`/`VERSION_RE`/
+  `BACKUP_HINT_RE` 四条识别正则、`dir_size` 的 20000 文件上限、`--keep` 与
+  `--stale-days` 的默认值 —— 这些决定「备份集怎么被聚合」,是比扩展名归类大得多的
+  设计问题,刻意没有塞进配置层
+- **`config.json` 是 per-安装、不是 per-库**:一份安装对应一份配置。要审计不同
+  备份根时用不同的 `skip_dirs`,目前只能装两份 skill。加一个 `--config PATH` 是
+  自然的后续,但它会引出「两处配置是替换还是叠加」这个新问题
 - 不校验备份**可恢复性**(不试解压/挂载),空备份只看 size/file_count
 - 不做增量备份的链式完整性检查(需解析备份格式)
 - 备份集聚合靠命名启发式,命名极不规范时可能误聚/漏聚
@@ -167,3 +367,4 @@ python3 backup_auditor.py coverage --source /Volumes/nas/data --backup /Volumes/
 | 备份集全为单版本 | 用户可能用「覆盖式」备份(无历史);确认策略后调 `--keep 1` 免报 |
 | coverage 全报缺失 | 源与备份命名体系完全不同;人工建立映射或按子目录逐个核对 |
 | dir_size 很慢 | 备份集内文件极多;脚本有文件数上限,超大集单独处理 |
+| 写了 `config.json` 但行为没变 | 先看 `--json` 里有没有 `stats.config` 这个键:**没有**就是文件没躺在 `backup_auditor.py` 旁边;**有**就看 `skipped_dirs` / `extension_overrides` 是不是你写的那几条 |
