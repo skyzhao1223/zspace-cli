@@ -287,7 +287,7 @@ zspace-cli/
 - [x] 批量 glob 辅助（`glob()` + `zs rm/mv/cp/down` 通配）
 - [x] Agent skill 家族：9 个跨 NAS 整理 skill（含通用分类归档 `file-sorter`）+ `nas-report` 入口、按需安装（`zs skill --list/--only`）
 - [x] 照片 EXIF 精确日期（`photo-organizer --exif`：exiftool → mdls → mtime 三档回退）— [#14](https://github.com/skyzhao1223/zspace-cli/issues/14)
-- [ ] skill 白名单目录 / 扩展名规则支持外部配置覆盖（`skills/<name>/config.json`）— [#15](https://github.com/skyzhao1223/zspace-cli/issues/15) · 机制已在 `file-sorter` + `photo-organizer` 落地，其余 7 个待移植
+- [x] skill 白名单目录 / 扩展名规则支持外部配置覆盖（`skills/<name>/config.json`）— [#15](https://github.com/skyzhao1223/zspace-cli/issues/15) · 8 个专项 scanner 全部落地（`nas-report` 刻意不接入）。各 skill 键集不同，且 `whitelist_dirs` 在其中 5 个里有 4 种不同效果——见 [`skills/README.md`](../skills/README.md) 的家族总表
 - [x] 存储增长趋势（`nas-report diff` 对比两次快照：类别/目录增减、速率与满盘 ETA）— [#16](https://github.com/skyzhao1223/zspace-cli/issues/16)
 
 ---
