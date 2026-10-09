@@ -737,5 +737,123 @@ print("  ✓ _cfg_match 锚定规则:17 条纯函数断言")
 PYEOF
 rm -rf "$CFG_SRC"
 
+echo "=== TEST 8: 读不了的目录不等于空备份 / 不跟随符号链接 ==="
+BA_SKILL_DIR="$SKILL_DIR" "$PY" - <<'PYEOF'
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+skill = os.environ["BA_SKILL_DIR"]
+script = f"{skill}/backup_auditor.py"
+
+
+def run(*args):
+    r = subprocess.run([sys.executable, script] + list(args) + ["--json"],
+                       capture_output=True, encoding="utf-8", errors="replace")
+    assert r.returncode == 0, (r.returncode, r.stderr[-400:])
+    return json.loads(r.stdout)
+
+
+# ── F1:读不了的备份项必须与「真正的空备份」区分开 ─────────────────────
+# chmod 000 在 Windows 上不产生同样的效果(os.chmod 只改只读位),scandir 不会
+# 抛 PermissionError,所以这一段在 Windows 上**跳过并明说**,不静默通过。
+if os.name == "nt":
+    print("  ⊘ F1 权限段在 Windows 上跳过(chmod 000 不产生 scandir 失败)")
+else:
+    root = tempfile.mkdtemp(prefix="ba-f1.")
+    try:
+        locked = os.path.join(root, "文档_20240101")
+        real_empty = os.path.join(root, "真空备份_20240101")
+        normal = os.path.join(root, "照片_20240101")
+        for d in (locked, real_empty, normal):
+            os.makedirs(d)
+        # 关键:锁住的目录里放**真实数据**,这样「报成空备份」才是可检出的错误
+        with open(os.path.join(locked, "f.bin"), "wb") as fh:
+            fh.write(b"D" * 5_000_000)
+        with open(os.path.join(normal, "a.bin"), "wb") as fh:
+            fh.write(b"A" * 2000)
+        os.chmod(locked, 0o000)
+
+        d = run("scan", "--root", root)
+        s = d["stats"]
+        # 1) 读失败必须可见:errors 通道 + 专门计数
+        assert "errors" in d, sorted(d)
+        assert len(d["errors"]) >= 1, d["errors"]
+        assert any(e["path"] == "文档_20240101" for e in d["errors"]), d["errors"]
+        assert s["unreadable_items"] == 1, s
+        # 2) 真正的空目录仍然被判为空(负控制:别把修复做成「不再报空备份」)
+        assert s["empty_items"] == 1, s
+        by = {}
+        for i in d["issues"]:
+            by.setdefault(i["path"], []).append(i["problems"][0])
+        # 3) 读不了的那项**不能**收到「空备份项(疑似失败)」这条最高优先级告警
+        assert not any("空备份项" in p for p in by.get("文档_20240101", [])), by
+        assert any("无法读取" in p for p in by.get("文档_20240101", [])), by
+        # 4) 真正的空目录**仍然**收到那条告警
+        assert any("空备份项" in p for p in by.get("真空备份_20240101", [])), by
+        # 5) 读不了的 5MB 不能被算进总量,也不能被算成 0 字节的正常项
+        assert s["total_size_bytes"] == 2000, s
+    finally:
+        os.chmod(os.path.join(root, "文档_20240101"), 0o755)
+        shutil.rmtree(root, ignore_errors=True)
+    print("  ✓ 读不了的备份项:errors 可见、单列 unreadable_items、"
+          "不再误报「空备份项(疑似失败)」,而真正的空目录仍照报")
+
+# ── F2:不跟随符号链接(否则会把 --root 之外的数据算进来)──────────────
+root = tempfile.mkdtemp(prefix="ba-f2.")
+try:
+    outside = os.path.join(root, "outside")
+    os.makedirs(os.path.join(outside, "真实外部数据"))
+    with open(os.path.join(outside, "真实外部数据", "big.bin"), "wb") as fh:
+        fh.write(b"O" * 900_000)
+    bk = os.path.join(root, "bk")
+    os.makedirs(os.path.join(bk, "照片_20240101"))
+    with open(os.path.join(bk, "照片_20240101", "a.bin"), "wb") as fh:
+        fh.write(b"A" * 3000)
+    try:
+        os.symlink(outside, os.path.join(bk, "外部链接_20240101"))
+        made = True
+    except (OSError, NotImplementedError, AttributeError) as e:
+        made = False
+        why = e
+    if not made:
+        # Windows 上建符号链接需要开发者模式/管理员权限
+        print(f"  ⊘ F2 跳过:无法创建符号链接({type(why).__name__})")
+    else:
+        d = run("scan", "--root", bk)
+        s = d["stats"]
+        # 只算 --root 内真实的 3000 字节;符号链接不算一个备份项
+        assert s["total_size_bytes"] == 3000, s
+        assert s["backup_items"] == 1, s
+        assert s["backup_sets"] == 1, s
+        assert not any("外部链接" in str(i.get("path", "")) for i in d["issues"]), d["issues"]
+        # coverage 的源目录同样不能把符号链接当成真实源目录
+        srconly = os.path.join(root, "srconly")
+        os.makedirs(srconly)
+        os.symlink(outside, os.path.join(srconly, "唯一条目"))
+        c = run("coverage", "--source", srconly, "--backup", bk)
+        assert c["stats"]["source_dirs"] == 0, c["stats"]
+        print("  ✓ 不跟随符号链接:--root 外的 900000B 未被计入(3000B/1 项/1 集),"
+              "coverage 的源根只含符号链接时 source_dirs=0")
+finally:
+    shutil.rmtree(root, ignore_errors=True)
+
+# ── 干净树上 errors 必须存在且为空(与 file-sorter / dedup-finder 同族约定)──
+clean = tempfile.mkdtemp(prefix="ba-clean.")
+try:
+    os.makedirs(os.path.join(clean, "照片_20240101"))
+    with open(os.path.join(clean, "照片_20240101", "a.bin"), "wb") as fh:
+        fh.write(b"A" * 1000)
+    d = run("scan", "--root", clean)
+    assert d["errors"] == [], d["errors"]
+    assert d["stats"]["unreadable_items"] == 0, d["stats"]
+    print("  ✓ 干净树:errors 键存在且为 []（与 file-sorter / dedup-finder 一致）")
+finally:
+    shutil.rmtree(clean, ignore_errors=True)
+PYEOF
+
 echo ""
 echo "🎉 所有 smoke test 通过"

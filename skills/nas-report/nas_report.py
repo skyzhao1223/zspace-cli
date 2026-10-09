@@ -25,7 +25,7 @@ MAX_DEPTH = 10
 SKIP_DIRS = {
     "@eaDir", "#recycle", "#@__recycle_bin", ".Trashes", ".Spotlight-V100",
     ".fseventsd", ".TemporaryItems", ".AppleDB", ".AppleDesktop", ".apdisk",
-    "System Volume Information", "$RECYCLE.BIN", ".snapshots", ".zspace_trash",
+    "System Volume Information", "$RECYCLE.BIN", ".snapshots", ".zspace_trash", "@Recycle",
     ".trash", "node_modules", ".git", ".svn", "__pycache__", ".venv", "venv",
     "lost+found",
 }

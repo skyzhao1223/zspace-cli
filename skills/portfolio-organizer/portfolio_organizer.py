@@ -42,7 +42,7 @@ JUNK_EXTS = {"tmp", "temp", "bak", "old", "swp", "crdownload", "part", "td"}
 SKIP_DIRS = {
     "@eaDir", "#recycle", "#@__recycle_bin", ".Trashes", ".Spotlight-V100",
     ".fseventsd", ".TemporaryItems", "System Volume Information", "$RECYCLE.BIN",
-    ".snapshots", ".zspace_trash", ".trash", ".cache", "node_modules", ".git",
+    ".snapshots", ".zspace_trash", "@Recycle", ".trash", ".cache", "node_modules", ".git",
     "lost+found",
 }
 # root 下的非项目功能目录,跳过项目级校验
@@ -258,10 +258,19 @@ class Scanner:
             "with_final_dir": 0, "with_source_dir": 0,
             "files": 0, "dirs": 0, "junk": 0, "loose_root": 0,
             "source_files": 0, "export_files": 0,
+            "unreadable_projects": 0, "unreadable_files": 0,
             "source_size_bytes": 0, "export_size_bytes": 0,
             "total_size_bytes": 0, "largest": [], "sampled_out": False,
         }
         self.issues: list[dict] = []
+        # 读取失败通道(F5,家族约定:file-sorter / dedup-finder / backup-auditor
+        # 都有同名同义的 errors 键)。哪级目录/哪个文件读不了都记下来,不再静默
+        # 吞掉 —— 否则「读不了的项目」与「真空项目」在 JSON 里逐字节相同,
+        # 见 SKILL.md「读失败」。
+        self.errors: list[dict] = []
+        # root 直下读不了的项目名:_eval_project 的「空项目目录」判定必须排除
+        # 它们,否则删除引导会指向一个其实有数据、只是暂时读不到的项目。
+        self._unreadable_projects: set[str] = set()
         self.projects: dict[str, Project] = {}
         self._sizes: list[tuple[int, str]] = []
         self._n_files = 0
@@ -274,6 +283,13 @@ class Scanner:
         try:
             entries = sorted(os.scandir(dir_path), key=lambda e: e.name)
         except OSError as e:
+            # 读失败进 errors 通道(F5):stderr 提示照旧,但 root 直下读不了的
+            # 项目还要记名 —— 否则它会被判成「空项目目录(建议删除)」,与真正
+            # 的空项目在 JSON 里逐字节相同,删除引导指向一个可能完好的项目。
+            self.errors.append({"path": "/".join(rel_parts) or str(dir_path),
+                                "error": str(e)})
+            if len(rel_parts) == 1:
+                self._unreadable_projects.add(rel_parts[0])
             print(f"⚠️ 无法读取 {dir_path}: {e}", file=sys.stderr)
             return
         for entry in entries:
@@ -314,11 +330,17 @@ class Scanner:
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
         full = "/".join(rel_parts + [name])
 
+        readable = True
         try:
             st = entry.stat()
             size = st.st_size
-        except OSError:
+        except OSError as e:
+            # 大小未知:按 0 计会低报总量(与 backup-auditor F1 同理),进 errors
+            # 通道;存在性是已知的,所以文件本身照计,只是大小不进总量与 largest。
+            self.errors.append({"path": full, "error": str(e)})
+            self.stats["unreadable_files"] += 1
             size = 0
+            readable = False
 
         if (name in JUNK_NAMES or ext in JUNK_EXTS or name.startswith("._")
                 or name.startswith("~$")):
@@ -329,8 +351,9 @@ class Scanner:
             return
 
         self.stats["files"] += 1
-        self.stats["total_size_bytes"] += size
-        self._sizes.append((size, full))
+        if readable:
+            self.stats["total_size_bytes"] += size
+            self._sizes.append((size, full))
 
         # root 直下散文件(不属于任何项目)
         if not rel_parts:
@@ -370,6 +393,16 @@ class Scanner:
     def _eval_project(self, proj: Project) -> None:
         self.stats["projects"] += 1
         problems: list[str] = []
+
+        # 读不了 ≠ 空(F5):「空项目目录(建议删除或补充内容)」是删除引导,对
+        # 一个只是权限/挂载断连而暂时读不到的项目发它,会引导用户删掉完好的
+        # 项目 —— 与 backup-auditor 的「空备份项」误报同族,见 SKILL.md「读失败」。
+        if proj.name in self._unreadable_projects:
+            self.stats["unreadable_projects"] += 1
+            self._add(proj.name, proj.name, True,
+                      ["无法读取(权限不足或挂载断连),内容未知 —— "
+                       "不等于空项目,别据此删除"])
+            return
 
         if not has_year(proj.name):
             problems.append("项目名缺年份(建议 YYYY_项目名)")
@@ -468,6 +501,7 @@ class Scanner:
             "stats": self.stats,
             "count": len(self.issues),
             "issues": self.issues,
+            "errors": self.errors[:50],
         }
 
 
@@ -477,6 +511,18 @@ def _human_size(n: float) -> str:
             return f"{n:.1f} {unit}" if unit != "B" else f"{int(n)} B"
         n /= 1024
     return f"{n:.1f} TB"
+
+
+def _print_errors(result: dict) -> None:
+    """打印读取失败明细。措辞与 file-sorter / dedup-finder / backup-auditor 一致。"""
+    errs = result.get("errors") or []
+    if not errs:
+        return
+    print(f"\n⚠️ 读取失败 {len(errs)} 项(权限/挂载断连):")
+    for e in errs[:5]:
+        print(f"  {e['path']}: {e['error']}")
+    if len(errs) > 5:
+        print(f"  …另有 {len(errs) - 5} 项,完整清单见 --json 的 errors 键")
 
 
 def _print_human(result: dict, top: int) -> None:
@@ -495,12 +541,20 @@ def _print_human(result: dict, top: int) -> None:
           f"| 有成品目录 {s['with_final_dir']}/{n_proj} "
           f"| 有源文件目录 {s['with_source_dir']}/{n_proj}")
     print(f"根目录散文件 {s['loose_root']} | 垃圾 {s['junk']}")
+    if s.get("unreadable_projects"):
+        print(f"⚠️  读不了的项目 {s['unreadable_projects']} 个"
+              f"(权限/挂载断连) —— 内容未知,**不计入空项目**")
+    if s.get("unreadable_files"):
+        print(f"⚠️  读不了的文件 {s['unreadable_files']} 个"
+              f"(大小未知,未计入总量)")
     if s["largest"]:
         print("\n最大文件 Top5:")
         for item in s["largest"]:
             print(f"  {_human_size(item['size']):>10}  {item['path']}")
     if s.get("sampled_out"):
         print("\n(已达 --sample 上限,结果不完整)")
+
+    _print_errors(result)
 
     issues = result["issues"]
     if not issues:

@@ -38,7 +38,7 @@ DEFAULT_MAX_ISSUES = 500   # 计划条数上限:几万文件的库不能吐 2MB 
 SKIP_DIRS = {
     "@eaDir", "#recycle", "#@__recycle_bin", ".Trashes", ".Spotlight-V100",
     ".fseventsd", ".TemporaryItems", "System Volume Information", "$RECYCLE.BIN",
-    ".snapshots", ".zspace_trash", ".trash", ".cache", "node_modules", ".git",
+    ".snapshots", ".zspace_trash", "@Recycle", ".trash", ".cache", "node_modules", ".git",
     "lost+found",
 }
 JUNK_NAMES = {".DS_Store", "Thumbs.db", "desktop.ini", ".localized"}

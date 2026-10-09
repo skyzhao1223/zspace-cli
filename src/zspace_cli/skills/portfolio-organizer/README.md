@@ -46,7 +46,8 @@ python3 skills/portfolio-organizer/portfolio_organizer.py scan \
 | 项目 | 缺封面图 | 顶层与成品目录都无 `cover/封面/preview/thumb` 图 |
 | 项目 | 缺项目说明 | 顶层无 `README/说明/简介` |
 | 项目 | 成品与源文件混放 | 顶层同时有 psd 类与 jpg/pdf 类,且无 `成品/` 目录 |
-| 项目 | 空项目目录 | 无任何文件 |
+| 项目 | 空项目目录 | 无任何文件,**且读得到**(读不了的走下一行) |
+| 项目 | 无法读取 | `scandir` 抛 `OSError`(权限不足/挂载断连)—— 内容未知,不等于空项目;`errors`/`unreadable_projects` 单列,别据此删除 |
 | 项目 | 成品多版本共存 | 成品池内同 base_stem ≥3 个 |
 | 文件 | 成品目录混入源文件 | `成品/` 里有 psd/blend 等 |
 | 文件 | 大体积源文件 | source 类文件 > `--large-gb`(默认 2GB) |
@@ -165,6 +166,7 @@ schema 直接写在 SKILL.md 里,用户自己建。
 4. **项目自包含** — 结构以项目为单位,方便整体拷贝/展示/交付
 5. **工程文件不可再生** — SKILL.md 约束源文件禁止自动删,压缩前必须确认
 6. **降噪** — 白名单目录、系统与开发目录静默跳过
+7. **读失败不静默** — `scandir`/`stat` 失败进顶层 `errors` 键(家族约定,干净时 `[]`);读不了的项目不再伪装成「空项目目录」
 
 ## 测试
 
@@ -186,6 +188,33 @@ TEST 7(issue #15)把脚本 `cp` 进临时目录模拟「装好之后」的布局
 目录里的 `config.json` 必须被忽略(3 种 cwd)、26 种畸形配置逐条 `exit=1` 且
 `stdout == ""`、校验先于写入(5 个集合分毫未动)、`is_cover()` 不受覆盖影响、
 `_cfg_match` 14 条纯函数断言。
+
+TEST 8(家族审计 F5)钉死「读不了 ≠ 空」:5 MB 的 `chmod 000` 项目产出非空
+`errors` 点名它、`unreadable_projects == 1`、收到「无法读取 … 别据此删除」而
+**不是**「空项目目录」,真空的兄弟项目**仍然**被判空(负控制,防修复退化成
+「不再报空项目」),`total_size_bytes` 不含那 5 MB;干净树 `errors == []`。
+权限段在 Windows 上跳过并明说(chmod 000 在那里不产生 scandir 失败)。
+
+## 读失败:根因与修复(F5)
+
+跨 scanner 一致性审计发现,与 backup-auditor 的 F1 同族:**把「不知道」当成「没有」**。
+
+`_walk()` 的 `scandir` 失败原本只打一行 `⚠️ 无法读取` 到 stderr,然后整棵子树静默
+跳过。后果(修复前实测):一个 `chmod 000` 但内含真实 5 MB `big.psd` 的项目,产出的
+issue 与真正的空项目**逐字节相同** —— 「空项目目录(建议删除或补充内容)」,
+`total_size_bytes` 里那 5 MB 完全不可见,JSON 顶层没有 `errors` 键,唯一线索是
+Agent 捕获输出时经常被吞掉的 stderr 行。而「空项目目录」是本 skill 唯一的删除引导。
+
+修复(与 backup-auditor F1 语义逐条对齐):
+
+- `Scanner.errors` 通道:`scandir` 与 `stat` 失败都记 `{path, error}`;JSON 顶层
+  **总是**输出 `errors`(干净时 `[]`,最多 50 条),与 file-sorter / dedup-finder /
+  backup-auditor 同名同义
+- root 直下读不了的项目 → 专门 issue「无法读取(权限不足或挂载断连),内容未知 ——
+  不等于空项目,别据此删除」,`stats.unreadable_projects` 单列,空项目判定排除它们
+- 文件 `stat` 失败时大小未知:不计入 `total_size_bytes`(算 0 会低报,估算又是假精确),
+  `stats.unreadable_files` 单列
+- 人类可读报告加 `⚠️ 读不了的项目/文件` 行与「读取失败」明细段(措辞与家族一致)
 
 ## 已知 gap
 

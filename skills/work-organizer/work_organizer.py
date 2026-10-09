@@ -49,7 +49,7 @@ LOCK_PREFIXES = ("~$", ".~", "~")
 SKIP_DIRS = {
     "@eaDir", "#recycle", "#@__recycle_bin", ".Trashes", ".Spotlight-V100",
     ".fseventsd", ".TemporaryItems", ".AppleDB", ".AppleDesktop", ".apdisk",
-    "System Volume Information", "$RECYCLE.BIN", ".snapshots", ".zspace_trash",
+    "System Volume Information", "$RECYCLE.BIN", ".snapshots", ".zspace_trash", "@Recycle",
     ".trash", ".cache", "node_modules", ".git", ".svn", ".idea", ".vscode",
     "__pycache__", ".venv", "venv", "lost+found",
 }
