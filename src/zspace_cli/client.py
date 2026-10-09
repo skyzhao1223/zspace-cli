@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import random
 import time
@@ -1416,6 +1417,36 @@ class ZSpaceClient:
             try:
                 with self._http.stream("GET", url, params=params) as resp:
                     resp.raise_for_status()
+                    # ZSpace signals *logical* failures as HTTP 200 plus a JSON
+                    # envelope — e.g. {"code":"N001533"} when the path is a
+                    # directory, or N001315 when it does not exist. Real file
+                    # bodies always come back as application/octet-stream with a
+                    # Content-Disposition header, even for .json files, so a JSON
+                    # content-type here unambiguously means "error, not content".
+                    # Without this the error body gets written to disk as if it
+                    # were the file, and download() reports success.
+                    ctype = (resp.headers.get("content-type") or "").lower()
+                    if ctype.startswith("application/json"):
+                        body = resp.read()
+                        payload: Any = None
+                        try:
+                            payload = json.loads(body)
+                        except ValueError:
+                            pass
+                        code = str(payload.get("code", "")) if isinstance(payload, dict) else ""
+                        if code and code != "200":
+                            msg = (
+                                str(payload.get("msg") or "download failed")
+                                if isinstance(payload, dict)
+                                else "download failed"
+                            )
+                            raise ZSpaceError(code, msg)
+                        # Defensive fallback: a genuine JSON payload with no error
+                        # code is treated as the file content.
+                        out.write_bytes(body)
+                        if progress is not None:
+                            progress(len(body), len(body))
+                        return out
                     total = int(resp.headers.get("content-length") or 0)
                     downloaded = 0
                     with out.open("wb") as fh:
@@ -1426,8 +1457,10 @@ class ZSpaceClient:
                                 progress(downloaded, total)
                 return out
             except ZSpaceError:
+                out.unlink(missing_ok=True)
                 raise
             except _RETRYABLE_EXC as exc:
+                out.unlink(missing_ok=True)
                 if not self._is_retryable(exc) or attempt >= self.max_retries:
                     raise
                 last_exc = exc
