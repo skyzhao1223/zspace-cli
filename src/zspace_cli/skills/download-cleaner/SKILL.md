@@ -38,6 +38,183 @@ python3 download_cleaner.py scan --root /Volumes/nas/下载 --sample 500
 | `scan --root PATH --json --output F` | JSON 输出 |
 | `--stale-days N` | 超过 N 天视为久未处理(默认 365) |
 | `--max-depth N` / `--sample N` / `--top N` | 深度 / 文件数上限 / 每类显示条数 |
+| 同目录 `config.json` | 可选覆盖层:`skip_dirs` + `extension_overrides`(见下「配置覆盖」) |
+
+## 配置覆盖(`config.json`,可选)
+
+真实下载区里总有**故意的例外**:一个当仓库用的 `临时/` 目录、某款下载器的私有
+半截文件扩展名、公司内部的 `.iso` 交付物。没有这个机制之前,唯一的办法是改脚本
+里的 `SKIP_DIRS` / `*_EXTS` 集合 —— 而下次 `pip install -U` 就把它冲掉了。
+
+**没有这个文件时,本 skill 的输出与引入该机制之前逐字节一致** —— 不多一个 JSON
+字段、不少一条问题。
+
+### 本 skill 接受哪些键
+
+只有两个。**顶层出现第三个键 → 直接报错退出。**
+
+| 键 | 类型 | 作用 |
+|----|------|------|
+| `skip_dirs` | `string[]` | **追加**到内置 `SKIP_DIRS`;命中的目录**整棵不进入**,里面的文件既不计入 `stats` 也不出任何问题 |
+| `extension_overrides` | `object` | **逐扩展名改判**:该扩展名先从**所有**内置表里摘掉,再放进指定的那一张 |
+
+> **刻意没有 `whitelist_dirs`。** 那个键在 file-sorter / photo-organizer 里的
+> 语义是「**视为合规 / 不要报**」—— 它喂的是那两个 skill 的**合规豁免**机制
+> (`--keep-dir` 与 `WHITELIST_DIRS`)。本 skill 不做合规判定:它对看见的每个
+> 文件都做分诊,没有「这个目录算合规」这个概念。同一个键名在不同 skill 里含义
+> 不同,用户把配置从一个 skill 复制到另一个就会得到**静默的意外行为**,所以这里
+> 只暴露本 skill 真正有的机制,并照它本来的样子命名:`skip_dirs`。
+>
+> 照抄 file-sorter 的配置会被明确拒绝,报错里列出本 skill 的可用键:
+> ```
+> ❌ 配置文件 /…/config.json 无效:未知键 whitelist_dirs;可用键只有 skip_dirs,
+>    extension_overrides。宁可报错也不警告后忽略 —— 键名拼错一个字母就会让整份
+>    配置静默失效,而用户看不出任何区别
+> ```
+
+### 放在哪
+
+`config.json` 按 **脚本自己所在的目录**(`__file__`)解析,**不是** cwd、**也不是**
+`--root`:
+
+```
+skills/download-cleaner/       ← zs skill 装好后就是你项目里的那一份
+├── download_cleaner.py
+├── config.json                ← 放这里
+└── SKILL.md
+```
+
+按 `__file__` 解析是刻意的:`--root` 底下万一躺着一个 `config.json`(下载区里
+什么都有),它只会被当成一个普通文件扫出来(归入 `other`),不会被读成配置。
+配置跟着**安装**走,不跟着**数据**走。
+
+### Schema
+
+两个键都可选;只写一个,另一个不产生任何影响。
+
+```jsonc
+{
+  // 整棵不进入的目录(fnmatch 模式,锚定在 --root)
+  "skip_dirs": ["临时", "下载器缓存/*", "PT 做种中"],
+
+  // 扩展名改判:键是扩展名(前导点可写可不写、大小写都行),
+  // 值是本 skill 的类别名
+  "extension_overrides": {
+    "iso":  "archive",   // 公司交付物是 iso,我想让它进「压缩包」流程
+    "ass":  "video",     // 内置判 other,字幕其实该跟着视频走
+    "tmp":  "doc"        // 内置判 junk(建议删),可我的 .tmp 是数据
+  }
+}
+```
+
+`extension_overrides` 的可用类别名就是分诊表那 10 个:
+
+```
+junk  partial  torrent  installer  archive  video  audio  photo  doc  other
+```
+
+`other` 是兜底(= 不属于任何一张表),写它等于把某个扩展名从现有类别里**摘出来**
+变成杂项。写成别的名字(比如 file-sorter 才有的 `cad`、photo-organizer 才有的
+`sidecar`)会报错,并在报错里列出本 skill 的可用类别。
+
+「逐扩展名」这一点是关键:写 `{"ass": "video"}` 只会让 `.ass` 变视频,`.srt`
+仍然是杂项,`.part` 仍然是未完成下载。替换整张表会静默撤掉内置行为 —— 那不是
+用户想要的。
+
+**`junk` 也能被覆盖。**`categorize()` 是**有序判定阶梯**,junk 在第一级;所以
+`{"tmp": "doc"}` 必须先把 `tmp` 从 `JUNK_EXTS` 里摘掉才有效,否则 junk 那一级
+先命中、覆盖看起来完全没生效。脚本就是这么做的(smoke 里有真断言)。
+
+改不了的:`JUNK_NAMES` 里的**文件名**(`.DS_Store` / `Thumbs.db`)、`._*`
+AppleDouble 规则、重复下载的正则(`(1)` / `副本` / `copy`)。`extension_overrides`
+只作用于扩展名。
+
+### 一个必须知道的耦合:`ARCHIVE_EXTS` 是**共享**的
+
+`ARCHIVE_EXTS` 同时被两处用:① 判类别;② 判「压缩包是否已解压」(同目录有没有
+去掉扩展名的同名目录)。所以:
+
+- `{"zip": "other"}` 之后,`pack.zip` 不再算压缩包,**也就不再参与「已解压」判定**
+  —— 即使 `pack/` 就在旁边。
+- `{"myext": "archive"}` 之后,`foo.myext` 旁边有个 `foo/` 就会判「已解压」。
+
+这不是 bug,是「一个扩展名只属于一个类别」的必然结果。smoke 里把这条钉住了。
+
+### 模式锚定规则(`skip_dirs`)
+
+与 file-sorter 的 `whitelist_dirs`、photo-organizer 的 `whitelist_dirs` 用的是
+**同一个匹配函数** `_cfg_match()`,规则完全一致:
+
+- `fnmatch` glob(`*` `?` `[seq]`),`*` **会跨过 `/`**
+- **大小写不敏感**(目录名和模式两边都折叠;双向都成立)
+- 匹配对象是**相对 `--root` 的目录路径**,用 `/` 连接;永远不含绝对路径
+- 命中一个目录 = 它的**整棵子树都不进入**
+- 命中的两条规则是「或」:① 匹配**整段相对路径**;② 匹配**任意一级目录名**
+
+| 模式 | `<root>/临时/2024/` | `<root>/临时/` 自己 | `<root>/深层/临时/` |
+|------|:--:|:--:|:--:|
+| `临时` | ✅ 规则② | ✅ 规则①② | ✅ 规则②(任意深度) |
+| `临时/*` | ✅ 规则① | ❌ | ❌(相对路径不以 `临时/` 开头) |
+| `深层/临时/*` | ❌ | ❌ | ❌(它下面还得有一层才算) |
+| `深层/临时` | ❌ | ❌ | ✅ 规则① |
+| `*` | ✅ | ✅ | ✅ |
+
+三条边界:
+
+1. **`skip_dirs` 只作用于目录**。直接躺在 `--root` 下的文件不吃它,连 `*` 也管不到
+   (判定时拿到的父目录层级是空的)。
+2. **`*` 不是子串**。`skip_dirs: ["照片"]` 不会顺手剪掉 `照片备份_2024/` —— 模式
+   是 fnmatch,不是「名字里出现过就算」。
+3. **绝对路径永远匹配不上**,所以写成 `/Volumes/nas/下载/临时` 或 `Z:\下载\临时`
+   会**直接报错**,而不是让你以为它生效了。
+
+> **与内置 `SKIP_DIRS` 的一处刻意差别**:内置那张表是**精确目录名、区分大小写**
+> (`name in SKIP_DIRS`,所以 `@eaDir` 与 `@eadir` 不是一回事);`skip_dirs` 走的是
+> 上面那套 **fnmatch + 大小写不敏感**。这是为了让整个 skill 家族的模式语义只有一
+> 套(用户在 file-sorter 学会的写法在这里一样管用),而内置表**一个字都没动**
+> —— 动了就会改变没有配置时的输出。
+
+### 出错行为
+
+配置文件存在但读不通 → **exit 1**,stderr 里**指名文件路径和出错的那个键**,而
+`--json` 的 stdout 保持干净(错误绝不混进 JSON,Agent 拿到的 stdout 要么是能解析
+的结果、要么是空的)。
+
+**校验全部跑完才动手改内置集合**:一份「`skip_dirs` 合法、`extension_overrides`
+非法」的配置不会留下半张改过的表,也不会打印「已加载」。
+
+会被拒绝的写法(每一条都有 smoke 断言):非法 JSON、**空文件**、顶层不是对象、
+未知键、`skip_dirs` 不是数组 / 元素不是字符串 / 空字符串 / 绝对路径(POSIX 与
+Windows 盘符两种)、`extension_overrides` 不是对象 / 类别值不是字符串 / 类别名不
+存在 / 扩展名含多个点(`tar.gz` —— 扩展名只取文件名最后一段,写 `gz`)/ 扩展名
+归一化后为空。
+
+### 怎么确认它真的生效了
+
+加载成功时 stderr 打一行(**没有配置文件时这一行不出现**):
+
+```
+ℹ️ 已加载覆盖配置 /…/skills/download-cleaner/config.json(skip_dirs 2 条,extension_overrides 3 条)
+```
+
+`--json` 里也会多一个 `stats.config`,**只有真加载了配置才会出现**:
+
+```jsonc
+"config": {
+  "path": "/…/skills/download-cleaner/config.json",
+  "skip_dirs": ["临时", "PT 做种中"],
+  "extension_overrides": {"iso": "archive", "ass": "video"},
+  "skipped_dirs": 3          // 因 skip_dirs 而没有进入的目录数
+}
+```
+
+人类可读报告里也会印一段 `⚙ 已加载覆盖配置 …`,把生效的键值列出来。
+
+反过来说:**结果里没有 `stats.config` 这个键 = 没找到配置文件 = 你的覆盖没生效**,
+先确认它是不是真的躺在 `download_cleaner.py` 旁边(而不是 `--root` 底下)。
+
+`skipped_dirs` 与 `stats.dirs` 要**一起汇报**:被剪掉的目录不计入 `dirs`,也不计入
+`files`,所以「文件数怎么变少了」的答案就在这两个数字里。
 
 ## 分诊类别与建议动作
 
@@ -129,9 +306,21 @@ python3 download_cleaner.py scan --root /Volumes/nas/下载 --sample 500
 | 做种中的种子 | 删 `.torrent` 掉分享率 | PT 用户保留活跃种子;只清完成任务的 |
 | 嵌套压缩 | 包里还有包 | `--max-depth` 保证扫到;逐层确认 |
 | SMB stat 慢 | 大下载区扫描久 | `--sample` 摸底;下载区通常文件数不多,可接受 |
+| 写了 `config.json` 但没生效 | `--json` 里没有 `stats.config`,stderr 也没有 `ℹ️ 已加载覆盖配置` | 它必须躺在 **`download_cleaner.py` 旁边**(按 `__file__` 解析),不是 cwd、也不是 `--root`;`--root` 底下的 `config.json` 只会被当成普通文件扫出来 |
+| `skip_dirs` 直接报错退出 | stderr 说「写成了绝对路径」 | 模式锚定在 `--root`,只能写相对路径(`临时`、`下载器缓存/*`) |
+| 改判出 `archive` 之后「已解压」不判了 | `pack.zip` 从 `delete-confirm` 变成 `review` | `ARCHIVE_EXTS` 同时喂类别判定与「已解压」启发式,见「配置覆盖」里那条耦合说明 |
+| 文件数莫名变少 | `stats.files` 比 `ls` 数出来的少 | 看 `stats.config.skipped_dirs`;被 `skip_dirs` 剪掉的目录整棵不计入 |
+| 照抄别的 skill 的配置报错 | 「未知键 whitelist_dirs」 | 本 skill 只认 `skip_dirs` 与 `extension_overrides`;报错里已列出可用键,照着改 |
 
 ## 已知 gap
 
+- ~~`SKIP_DIRS` 与 9 张扩展名表是硬编码的,私有格式要改脚本~~ → **已部分解决**
+  (issue #15):同目录 `config.json` 的 `skip_dirs` / `extension_overrides`。
+  仍然硬编码的:`JUNK_NAMES`(文件名而非扩展名)、`DUP_MARK_RE`(重复下载后缀)、
+  `ARCHIVE_HINT` 里的目标库文案、`MAX_DEPTH`、`--stale-days` 默认值
+- **`config.json` 是 per-安装、不是 per-库**:一份安装对应一份配置。要给不同的
+  下载区用不同的 `skip_dirs`,目前只能装两份 skill。加一个 `--config PATH` 是自然
+  的后续,但它会引出「两处配置是替换还是叠加」这个新问题
 - 「已解压」靠同名目录启发式,不比对压缩包内容与目录
 - 不解析压缩包内文件列表(需 zipfile 逐个读,大压缩包慢)
 - 重复下载只按名字 `(1)`/副本 识别,内容级重复走 dedup-finder
@@ -144,3 +333,4 @@ python3 download_cleaner.py scan --root /Volumes/nas/下载 --sample 500
 | `--root 不是有效目录` | 确认已挂载:`ls /Volumes/`;下载区可能是 PT/BT 客户端的独立目录 |
 | 可回收空间为 0 但很乱 | 多是待归档媒体(move-to-library);走场景 3 分流 |
 | 扫描慢 | `--sample 2000` 摸底 |
+| 写了 `config.json` 但行为没变 | 先看 `--json` 里有没有 `stats.config` 这个键:**没有**就是文件没躺在 `download_cleaner.py` 旁边;**有**就看 `skipped_dirs` / `extension_overrides` 是不是你写的那几条 |

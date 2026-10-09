@@ -14,12 +14,14 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import re
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import NoReturn
 
 MAX_DEPTH = 6
 
@@ -42,6 +44,10 @@ DOC_EXTS = {
     "key", "numbers", "pages", "wps", "et", "dps", "epub", "mobi", "azw3",
 }
 JUNK_NAMES = {".DS_Store", "Thumbs.db", "desktop.ini", ".localized"}
+# 与 file-sorter / photo-organizer 同名同义:categorize() 判定阶梯的第一级。
+# 原本内联在 categorize() 里,提成常量才能让 config.json 的
+# extension_overrides 把一个扩展名从 junk 里摘出来(见 CONFIG_EXT_TABLES)。
+JUNK_EXTS = {"tmp", "temp", "bak"}
 SKIP_DIRS = {
     "@eaDir", "#recycle", "#@__recycle_bin", ".Trashes", ".Spotlight-V100",
     ".fseventsd", ".TemporaryItems", "System Volume Information", "$RECYCLE.BIN",
@@ -62,10 +68,131 @@ CATEGORIES = (
     "video", "audio", "photo", "doc", "other",
 )
 
+# ── 可选覆盖层:config.json(与本脚本同目录)────────────────────────────
+# 「装 skill」是逐目录 copytree(cli.py 的 zs skill,加 --only 也一样),共享模块
+# 装不进用户目录,所以这一段在每个 scanner 里逐字重复 —— 要改就全局搜索替换,
+# 别只改一处。per-skill 的只有紧跟其后的 CONFIG_KEYS 和它点到的那张表。
+CONFIG_NAME = "config.json"
+CONFIG_KEYS = ("skip_dirs", "extension_overrides")
+CONFIG_SKIP: list[str] = []           # skip_dirs 追加到这里(扩展内置 SKIP_DIRS)
+CONFIG_INFO: dict[str, object] = {}   # 非空 = 真加载了配置,回写进 stats 供核对
+# 类别名 → 本 skill 的扩展名集合;值为 None 表示「不属于任何集合」,即兜底类别。
+CONFIG_EXT_TABLES: dict[str, set[str] | None] = {
+    "junk": JUNK_EXTS, "partial": PARTIAL_EXTS, "torrent": TORRENT_EXTS,
+    "installer": INSTALLER_EXTS, "archive": ARCHIVE_EXTS, "video": VIDEO_EXTS,
+    "audio": AUDIO_EXTS, "photo": PHOTO_EXTS, "doc": DOC_EXTS, "other": None,
+}
+
+
+def _cfg_die(path: Path, msg: str) -> NoReturn:
+    """配置有问题就**立刻退出**,并指名是哪个文件、哪个键。
+
+    静默忽略一份用户以为生效了的配置是最坏的失败方式:扫描会继续按内置规则出
+    结果,而且不给任何解释。
+    """
+    raise SystemExit(f"❌ 配置文件 {path} 无效:{msg}")
+
+
+def _cfg_match(rel_parts: list[str], patterns: list[str]) -> bool:
+    """目录是否命中 skip_dirs 模式。锚定在被扫描的根目录,大小写不敏感。
+
+    模式匹配「整段相对路径」**或**「任一级目录名」即命中,fnmatch 的 `*` 会跨过
+    `/`。所以 `临时/*` 命中 <root>/临时/2024,但不命中 <root>/x/临时;不含
+    `/` 的 `临时` 命中任意深度的同名目录。命中一个目录即命中它的整棵子树。
+    绝对路径永远匹配不上,load_config 会直接报错而不是让你以为它生效了。
+    """
+    if not patterns or not rel_parts:
+        return False
+    joined = "/".join(rel_parts).lower()
+    for pat in patterns:
+        low = pat.lower()
+        if fnmatch.fnmatch(joined, low):
+            return True
+        if any(fnmatch.fnmatch(p.lower(), low) for p in rel_parts):
+            return True
+    return False
+
+
+def load_config(script_dir: Path | None = None) -> None:
+    """读同目录的 config.json,把两个键**并入**内置默认值(不替换)。
+
+    文件不存在 → 立刻返回:没有 config.json 时本 scanner 的输出与引入这段代码
+    之前**逐字节一致**。合并语义、模式锚定规则、报错行为逐条写在 SKILL.md 的
+    「配置覆盖(config.json)」一节。校验全部跑完才动手改内置集合 —— 半途退出
+    会留下一张只改了一半的表,那比直接报错难查得多。
+    """
+    path = (script_dir or Path(__file__).resolve().parent) / CONFIG_NAME
+    if not path.is_file():
+        return
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as e:
+        _cfg_die(path, f"读不了这个文件:{e}")
+    except ValueError as e:
+        _cfg_die(path, f"不是合法 JSON(空文件也算):{e}")
+    if not isinstance(raw, dict):
+        _cfg_die(path, f"顶层必须是 JSON 对象,实际是 {type(raw).__name__}")
+    unknown = sorted(set(raw) - set(CONFIG_KEYS))
+    if unknown:
+        _cfg_die(path, f"未知键 {', '.join(unknown)};可用键只有 "
+                 f"{', '.join(CONFIG_KEYS)}。宁可报错也不警告后忽略 —— 键名拼错"
+                 "一个字母就会让整份配置静默失效,而用户看不出任何区别")
+    skip = raw.get("skip_dirs", [])
+    if not isinstance(skip, list):
+        _cfg_die(path, f"skip_dirs 必须是字符串数组,实际是 "
+                 f"{type(skip).__name__}(只有一条也要写成 [\"临时\"])")
+    for i, item in enumerate(skip):
+        if not isinstance(item, str):
+            _cfg_die(path, f"skip_dirs[{i}] 必须是字符串,实际是 "
+                     f"{type(item).__name__}")
+        pat = item.strip()
+        if not pat:
+            _cfg_die(path, f"skip_dirs[{i}] 是空字符串")
+        if pat.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:[\\/]", pat):
+            _cfg_die(path, f"skip_dirs[{i}] 写成了绝对路径 {item!r};"
+                     "模式锚定在被扫描的根目录,只能写相对路径(如 临时/*)")
+    ext = raw.get("extension_overrides", {})
+    if not isinstance(ext, dict):
+        _cfg_die(path, f"extension_overrides 必须是对象,实际是 "
+                 f"{type(ext).__name__}")
+    pairs: list[tuple[str, str]] = []
+    for key, cat in ext.items():
+        if not isinstance(cat, str):
+            _cfg_die(path, f"extension_overrides[{key!r}] 必须是字符串类别名,"
+                     f"实际是 {type(cat).__name__}")
+        e = key.strip().lstrip(".").lower()
+        if not e:
+            _cfg_die(path, f"extension_overrides 的键 {key!r} 归一化后是空的")
+        if "." in e:
+            _cfg_die(path, f"extension_overrides 的键 {key!r} 含多个点:扩展名只取"
+                     f"文件名最后一段(tar.gz 的扩展名是 gz),请写成 "
+                     f"{e.rsplit('.', 1)[-1]!r}")
+        if cat not in CONFIG_EXT_TABLES:
+            _cfg_die(path, f"extension_overrides[{key!r}] 的类别 {cat!r} 本 skill "
+                     f"不认识;可用类别:{', '.join(sorted(CONFIG_EXT_TABLES))}")
+        pairs.append((e, cat))
+    # 校验全过才动手。扩展名先从别的表里摘掉再放进指定的那一张,否则判定阶梯
+    # 会按它自己的顺序命中旧类别,覆盖看起来完全没生效。
+    CONFIG_SKIP.extend(item.strip() for item in skip)
+    for e, cat in pairs:
+        for name, table in CONFIG_EXT_TABLES.items():
+            if table is not None and name != cat:
+                table.discard(e)
+        target = CONFIG_EXT_TABLES[cat]
+        if target is not None:
+            target.add(e)
+    CONFIG_INFO.update({
+        "path": str(path),
+        "skip_dirs": list(CONFIG_SKIP),
+        "extension_overrides": dict(pairs),
+    })
+    print(f"ℹ️ 已加载覆盖配置 {path}(skip_dirs {len(skip)} 条,"
+          f"extension_overrides {len(pairs)} 条)", file=sys.stderr)
+
 
 def categorize(name: str, ext: str) -> str:
     """纯函数:按文件名/扩展名给下载文件分类。"""
-    if name in JUNK_NAMES or name.startswith("._") or ext in ("tmp", "temp", "bak"):
+    if name in JUNK_NAMES or name.startswith("._") or ext in JUNK_EXTS:
         return "junk"
     if ext in PARTIAL_EXTS or name.endswith(".bt.td"):
         return "partial"
@@ -131,6 +258,7 @@ class Scanner:
         self.issues: list[dict] = []
         self._sizes: list[tuple[int, str]] = []
         self._n_files = 0
+        self._cfg_skipped_dirs = 0   # 因 config skip_dirs 未纳入的目录数
 
     # -- 遍历 ----------------------------------------------------------
 
@@ -154,19 +282,32 @@ class Scanner:
             if entry.is_dir():
                 if name in SKIP_DIRS or name.startswith("."):
                     continue
+                child_rel = rel_parts + [name]
+                if _cfg_match(child_rel, CONFIG_SKIP):
+                    self._cfg_skipped_dirs += 1
+                    continue
                 self.stats["dirs"] += 1
-                self._walk(entry.path, rel_parts + [name])
+                self._walk(entry.path, child_rel)
             elif entry.is_file():
                 self._n_files += 1
                 self._check_file(entry, rel_parts, name, dir_names)
 
     def _check_file(self, entry: os.DirEntry, rel_parts: list[str],
                     name: str, sibling_dirs: set[str]) -> None:
-        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        # 判定顺序与 file-sorter 一致:**先**认出 junk 名,再决定要不要跳过点文件。
+        # 原先这里写的是 `name.startswith(".") and name not in JUNK_NAMES`,于是
+        # `.DS_Store`(在 JUNK_NAMES 里)能过、`._movie.ass`(不在)被提前 return,
+        # 永远走不到 categorize() 里那条 `startswith("._")` → junk —— 那条规则
+        # 经 CLI 是死代码,只有直接调纯函数才看得到(issue #58)。
+        is_junk_name = name in JUNK_NAMES or name.startswith("._")
+        if name.startswith(".") and not is_junk_name:
+            return                      # 普通 dotfile 静默忽略
+        # junk 名不参与扩展名推断:`._movie.ass` 不该拿到 `ass` 这个扩展名,
+        # 否则一旦 categorize() 的阶梯顺序变动,它就可能被判成字幕而不是垃圾。
+        ext = "" if is_junk_name else (
+            name.rsplit(".", 1)[-1].lower() if "." in name else "")
         stem = os.path.splitext(name)[0]
         full = "/".join(rel_parts + [name])
-        if name.startswith(".") and name not in JUNK_NAMES:
-            return
 
         try:
             st = entry.stat()
@@ -220,6 +361,11 @@ class Scanner:
         print(
             f'扫描完成: {self.stats["files"]} 文件\n', file=sys.stderr,
         )
+        if CONFIG_INFO:
+            # 只在真加载了 config.json 时才多这一个键(与 photo-organizer 的
+            # --exif 同一个手法),没有配置文件时 JSON 与引入覆盖层之前逐字节一致
+            self.stats["config"] = {**CONFIG_INFO,
+                                    "skipped_dirs": self._cfg_skipped_dirs}
         return {
             "skill": "download-cleaner",
             "root": str(self.root),
@@ -245,6 +391,34 @@ CATEGORY_ZH = {
 }
 
 
+def _print_config(s: dict) -> None:
+    """把生效的覆盖配置打进人类报告 —— 「哪份配置在生效」必须一眼可查。
+
+    三个 scanner 里 dedup-finder 的输出是删除计划,而 prefer_keep_hints 能反转
+    「重复组里保留哪个」,所以生效的提示词尤其不能只躺在 JSON 里。没有加载配置
+    时一个字都不打印:人类报告与引入覆盖层之前逐字节一致。
+    """
+    cfg: dict = s.get("config") or {}
+    if not cfg:
+        return
+    print(f"\n⚙ 已加载覆盖配置 {cfg['path']}")
+    for key in CONFIG_KEYS:
+        val = cfg.get(key)
+        if not val:
+            continue
+        if isinstance(val, list):
+            shown = ", ".join(val)
+        elif isinstance(val, dict):
+            shown = ", ".join(f"{k}→{v}" for k, v in val.items())
+        else:
+            shown = str(val)
+        print(f"  {key}: {shown}")
+    if cfg.get("prefer_keep_hints_effective"):
+        print("  保留提示词生效全集(内置 + 本次追加,决定重复组里先保留哪个):")
+        print(f"    {', '.join(cfg['prefer_keep_hints_effective'])}")
+    print(f"  因 skip_dirs 未纳入的目录: {cfg.get('skipped_dirs', 0)} 个")
+
+
 def _print_human(result: dict, top: int) -> None:
     s = result["stats"]
     print("=" * 70)
@@ -259,6 +433,7 @@ def _print_human(result: dict, top: int) -> None:
             print(f"  {CATEGORY_ZH[cname]:<6} {cv['count']:>6} 个  "
                   f"{_human(cv['size']):>10}")
     print(f"\n重复下载 {s['duplicate_downloads']} | 久未处理 {s['stale_files']}")
+    _print_config(s)
     if s["largest"]:
         print("\n最大文件 Top10:")
         for item in s["largest"]:
@@ -332,6 +507,10 @@ def main() -> None:
     if args.cmd != "scan":
         print(f"未知命令: {args.cmd}", file=sys.stderr)
         raise SystemExit(1)
+
+    # 可选覆盖层:同目录 config.json。没有这个文件时下面这行什么都不做,
+    # 内置的 SKIP_DIRS 与 9 张 *_EXTS 表 一个都不变,输出与引入覆盖层之前逐字节一致。
+    load_config()
 
     scanner = Scanner(args.root, args.max_depth, args.sample, args.stale_days)
     result = scanner.scan()

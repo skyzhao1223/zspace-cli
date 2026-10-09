@@ -86,13 +86,15 @@ with ZSpaceClient() as zs:
 | `zs recycle config` | Retention policy; `-1` means never auto-purge (`--my-cycle N`, `--public-cycle N`) |
 | `zs up <local> <remote_dir>` | Upload (`-n/--name` to rename; `--verify` for post-upload MD5 round-trip verification; large files auto-switch to sliced upload) |
 | `zs down <path> [dir]` | Download |
+| `zs baidu check/ls/tasks/fails/retry` | Baidu NetDisk via the NAS `/znetdisk/*` module (read side; `retry` mutates task state) — [details](docs/integrations.md#baidu-netdisk-百度网盘-via-the-nas-znetdisk-module) |
 | `zs skill <dir>` | Copy Agent skills into a project (`--list`, `--only a,b`) |
 | `zs --config-dir <dir>` | Point at a non-default `vuex.json` location (or `ZS_CONFIG_DIR`) |
 
 `zs check`, `zs ls`, `zs info`, `zs find`, `zs tree`, `zs usage`, `zs du`,
-`zs disks`, `zs smart`, `zs recycle list/config` accept `--json` for
-machine-readable output. `zs mv`/`zs cp`/`zs rm`/`zs down` accept `* ?` glob
-patterns on the source path.
+`zs bigfiles`, `zs disks`, `zs smart`, `zs recycle list/config` accept `--json`
+for machine-readable output. `zs mv`/`zs cp`/`zs rm`/`zs down` accept `* ?` glob
+patterns on the source path. `zs baidu check`/`ls`/`tasks`/`fails` also accept
+`--json`.
 
 > `ls` pages through large directories automatically (the NAS API returns at most 50 entries per call). `find` uses the NAS full-text index, so it searches across directories. Upload/download show a progress bar on a real terminal and stream the file (no full-file buffering). Pass `--verify` to `zs up` to download the uploaded file to a temporary directory and compare its MD5 with the local source; verification is opt-in because it doubles transfer. CJK paths work out of the box. Files above 64 MB are uploaded through the desktop client's sliced `/v2/file/upload` protocol (2 MB slices), because the local proxy rejects oversized single-request bodies with HTTP 413; a 413 on a smaller file falls back to slices automatically.
 
@@ -123,6 +125,7 @@ patterns on the source path.
 | SMART report | `zs smart [sn]` | `client.smart(sn)` | `zspace_smart` |
 | Recycle bin (read) | `zs recycle list/config` | `client.recycle_list()` / `client.recycle_config()` | `zspace_recycle_list` / `zspace_recycle_config` |
 | Recycle bin (write) | `zs recycle restore/purge/empty` | `client.recycle_restore()` / `recycle_purge()` / `recycle_empty()` | `zspace_recycle_restore` / `_purge` / `_empty` (confirm-gated) |
+| Baidu NetDisk (read side) | `zs baidu check/ls/tasks/fails/retry` | `client.baidu_*()` | — |
 
 ---
 
@@ -315,7 +318,7 @@ For cloud-drive → NAS pipelines, combine with [baidu-pan-skill](https://github
 - [x] Batch glob helpers (`glob()` + `zs rm/mv/cp/down` patterns)
 - [x] Agent skill family: 9 cross-NAS organizers (incl. `file-sorter` for generic type-based archiving) + `nas-report` entry, selective install (`zs skill --list/--only`)
 - [x] Optional EXIF-based photo dating (`photo-organizer --exif`: exiftool → mdls → mtime fallback) — [#14](https://github.com/skyzhao1223/zspace-cli/issues/14)
-- [ ] Per-skill config overrides (`skills/<name>/config.json`: whitelist dirs / extension rules) — [#15](https://github.com/skyzhao1223/zspace-cli/issues/15) · mechanism shipped for `file-sorter` + `photo-organizer`, 7 skills still to port
+- [x] Per-skill config overrides (`skills/<name>/config.json`: whitelist dirs / extension rules) — [#15](https://github.com/skyzhao1223/zspace-cli/issues/15) · shipped for all 8 scanners (`nas-report` deliberately excluded). The key set differs per skill and `whitelist_dirs` has four distinct effects across five of them — see the family table in [`skills/README.md`](skills/README.md)
 - [x] Growth-trend reports (`nas-report diff` two snapshots: category/dir growth, rate & ETA) — [#16](https://github.com/skyzhao1223/zspace-cli/issues/16)
 
 ---

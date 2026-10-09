@@ -25,57 +25,65 @@ ZSpace client on Linux, report your actual path in issue #7 and fix the
 candidate list + add a regression test.
 **Why:** Windows users are covered; Linux support still ships unverified.
 
-### 🟡 Resumable sliced upload (`/v2/file/tmpinfo`)
-`client.py::_upload_sliced()` restarts from `seek=0` when a process dies.
-The desktop client supports resuming: it keeps `finishedSize` and queries
-`GET /v2/file/tmpinfo` (see `Jo` in the client's `background.js`, extractable
-from `app.asar`). The exact parameter set is **not yet known** — naive guesses
-(`path`, `size`, `uuid` combos) return `N001212 参数有误`. Reverse-engineer the
-real params (e.g. by watching the desktop client resume an interrupted upload
-via a local proxy like mitmproxy/whistle), then persist `{uuid, target,
-finished}` locally and resume.
-**Why:** multi-GB uploads over flaky relays are exactly when resume matters.
-
-### 🟡 Parallel slice upload
-Slices are uploaded strictly sequentially. The client's vuex has
-`uploadProcess: 4` and `uploadSlice` hints at concurrency. Test whether the NAS
-accepts concurrent/out-of-order slices for one `uuid` (start 2–4 slices in
-parallel; verify with a round-trip MD5). If yes, add `--jobs N` to `zs up`.
-**Why:** ~2–4x upload throughput on high-latency relays.
-
-### 🟢 Post-upload integrity check (`zs up --verify`)
-After upload, `zs down` the file (or fetch a server-side hash — probe
-`POST /v2/file/hash`) and compare MD5 with the local file. The sliced protocol
-was validated this way manually (680 MB round-trip, byte-identical); productize
-it as an opt-in flag.
-
 ### 🟡 i18n for CLI output
 All CLI messages are Chinese (`OK 已上传到 …`). Add an English mode via
 `ZS_LANG=en` / `--lang`, keeping zh as default. Typer help strings too.
 **Why:** the README is English-first; international users hit a wall at runtime.
 
-## The `/znetdisk/*` Baidu NetDisk integration (🔴, high impact)
+## The `/znetdisk/*` Baidu NetDisk integration (🟡, read side shipped)
 
 The NAS ships an official Baidu NetDisk (百度网盘) module that the desktop proxy
-exposes under `/znetdisk/*`. Observed working (via the local proxy with the
-standard token/nasid/device_id auth):
+exposes under `/znetdisk/*` with the standard token/nasid/device_id auth and the
+same `{code:"200", msg, data}` envelope as the file API.
 
-| Endpoint | Notes |
-|----------|-------|
-| `auth/check`, `auth/userinfo`, `auth/token`, `auth/logout` | `userinfo` returns baidu uk, vip_type, **iot_vip_type** (百度NAS会员), quota |
-| `share/verify` | `{short_url, pwd}` → `data.spwd` (server-side share verification) |
-| `share/filelist` | `{short_url, spwd, page, limit, path}` → shared entries incl. `fsid`, `md5`, `size` |
-| `share/transfer`, `share/transfer_result` | save share → own pan; **gated**: non-NAS-VIP gets `code 15 需要NAS会员权限` |
-| `file/download` | `{file_ids, save_path}` — create NAS-side download task from own pan (accepted for non-VIP, but observed **0 B/s stall** — Baidu throttles non-VIP openapi hard; verify before building UX on it) |
-| `task/list`, `task/action` | task states: 1=downloading 2=paused 4=done 5=queued 6=retrying; actions: `resume/pause/clean/pause_all/resume_all/clean_all/clean_all_done/resume_fail_all/clean_fail_all` |
-| `fail/list`, `autobackup/*`, `sync/*`, `membership/active`, `order/*` | unexplored |
+> ✅ **Shipped** (this repo, `zs baidu` + `client.baidu_*` + docs): the
+> **read-only** side — `auth/check`, `auth/userinfo`, `file/list`, `task/list`,
+> `fail/list` were probed against a real NAS and wrapped; `share/verify`,
+> `share/filelist`, `task/action` are wrapped from source (not exercised live).
+> Full field lists, the `down_state`/`taskFailed` semantics and the
+> measured-vs-inferred split now live in
+> [`skills/zspace-nas/api-reference.md`](../skills/zspace-nas/api-reference.md)
+> → 「百度网盘集成 API」, with the UX/gating story in
+> [`docs/integrations.md`](integrations.md) → Baidu NetDisk.
 
-Deliverables could be: `zs baidu check|ls|tasks|retry` CLI + SDK methods + a
-`zspace-nas` skill section documenting the above. Even **docs-only** (adding
-this table to `skills/zspace-nas/api-reference.md` with caveats) is a valuable
-PR. The web-client source is reachable: `http://127.0.0.1:13579/home/` serves
-the NAS's Vue app; upload/task logic lives in lazy chunks (search
-`znetdisk/share/transfer`).
+Endpoints, with what's wrapped vs. still open:
+
+| Endpoint | Notes | Status |
+|----------|-------|--------|
+| `auth/check`, `auth/userinfo` | `userinfo` returns baidu `uk`, `vip_type`, **`iot_vip_type`** (百度NAS会员), `quota`, `iot_vip_cashier` | ✅ wrapped (measured) |
+| `file/list` | `{path, page(1-based), limit}` → own-pan entries with **`fs_id`** (note: not `fsid`), `server_filename`, `size`, `isdir` | ✅ wrapped (measured) |
+| `task/list` | `{page, limit, state}` (`state`: `""`/`running`/`done`/`pause`/`fail`) → `data.list[]`, `task_count`, `unfinished_task` | ✅ wrapped (measured) |
+| `fail/list` | `{page, limit, task_id?}` → `data.list[]`, `total`; entries carry `baidu_fail_code`, `advice`, `fail_reason` | ✅ wrapped (measured) |
+| `share/verify` | `{short_url, pwd}` → `data.spwd` (server-side share verification, no local cookie) | ✅ wrapped (source only) |
+| `share/filelist` | `{short_url, spwd, page, limit, path}` → shared entries incl. **`fsid`**, `md5`, `size` | ✅ wrapped (source only) |
+| `task/action` | `{method, task_id?}`; methods `resume/pause/clean/pause_all/resume_all/clean_all/clean_all_done/resume_fail_all/clean_fail_all` | ✅ wrapped (write; `zs baidu retry` only maps `resume`/`resume_fail_all`, confirm-gated) |
+| `share/transfer`, `share/transfer_result` | save share → own pan; **gated**: non-NAS-VIP gets `code 15 需要NAS会员权限` | ⛔ documented, not wrapped (mutating + gated) |
+| `file/download` | `{file_ids, save_path}` — NAS-side download task from own pan (accepted for non-VIP but observed **0 B/s stall** — Baidu throttles non-VIP openapi hard) | ⛔ documented, not wrapped (mutating + stalls) |
+| `file/upload`, `file/newdir`, `auth/token`, `auth/logout`, `sync/*`, `autobackup/*`, `membership/active`, `order/*`, `zdrive/baidu/rclone/mountinfo` | write/config/auth endpoints (module 2934 in the NAS Vue app defines them all) | ⛔ documented, not wrapped (mutating) |
+
+**Correction learned while wiring this up.** The earlier note here (and #12)
+listed `down_state` as `5=queued, 6=retrying`. The NAS web app's task-center
+render code (module `39137`) actually branches on `1=downloading, 2=paused,
+4=done, 6=queued, 9=creating-backup-dir, 10=hashing-files`, and "retrying" is
+**not a distinct state** — it's `down_state==1 && retry_times>0`. A live
+`task/list` sample (`down_state=6, retry_times=0`, 31 unfinished) matches
+`6=queued`, not `6=retrying`. `zs baidu tasks` and api-reference.md use the
+source-backed mapping. "Failure" is likewise a combination (`fail_reason`, or
+`fail_num>0 && down_state==4`, or `baidu_limit/illegal_content/space_fulle`),
+never a single `down_state`.
+
+**Still open (the interesting remaining work):**
+- A `baidu-backup` **skill** for agents (scan pan → propose a save plan → the
+  membership-gated transfer/download stays human-confirmed). Needs a NAS-VIP
+  account to validate end-to-end.
+- Live verification of `share/verify` → `share/filelist` → `share/transfer` on a
+  NAS-VIP account (this PR could only source them, not exercise the gated writes).
+
+Source: the NAS's Vue app at `http://127.0.0.1:13579/home/`; the endpoints are
+defined in lazy chunk `64392` (module `2934`), the task-center UI in chunk
+`4548` (module `39137`). `grep -a znetdisk app.asar` finds **nothing** — this
+module runs on the NAS, not in the desktop Electron client.
+
 
 ## Skills family
 
@@ -95,24 +103,51 @@ fixture per skill. One skill per PR is fine. Family-level guidance already
 exists in `skills/README.md` → 「执行阶段的两个坑」, so a skill that hasn't
 been ported yet is at least documented.
 
-### 🟢 Port the `config.json` overlay to the other 7 skills — roadmap #15 (partly shipped)
-The mechanism landed in #47 for **`file-sorter` and `photo-organizer`**: an
-optional `skills/<name>/config.json`, resolved next to the *installed script*
-(`__file__`, not cwd), carrying `whitelist_dirs` and `extension_overrides` — so a
-proprietary CAD extension or an intentional `原盘/VIDEO_TS` tree no longer needs
-a code edit that the next `pip install` overwrites. Read #47's implementation
-before porting; the remaining 7 skills (`nas-report`, `music-`, `work-`,
-`portfolio-organizer`, `download-cleaner`, `dedup-finder`, `backup-auditor`)
-still hardcode their compliant shapes. One skill per PR is fine, and each needs a
-smoke case proving the overlay is picked up from the script's own directory.
-
-> Note for the roadmap checkboxes: #15 is **partly** done, so it stays `[ ]` with
-> an annotation rather than getting ticked. This list has drifted three times now
-> (#16, #14, #15) because shipping a feature and updating the roadmap are
+> Note for the roadmap checkboxes: this list has drifted four times now (#16,
+> #14, #15 twice) because shipping a feature and updating the roadmap are
 > separate acts — if your PR closes or advances a roadmap item, tick/annotate it
 > in **both** READMEs and update this file in the same PR.
 
 > ✅ Shipped since this list was written:
+> - **Resumable sliced upload** (#53, roadmap-adjacent, issue #10) —
+>   `GET /v2/file/tmpinfo?path=&uuid=` answers with `data.size`, the bytes the
+>   NAS already accepted for that session; the session uuid is recomputable
+>   locally (`md5(mtime_ms + size + target)`), so **no state needs persisting**,
+>   which is simpler than what this entry proposed. Two measurements shaped the
+>   implementation: after a completed upload the session is consumed and the same
+>   query returns `N001315`, so "no session" and "already finished" are one
+>   signal; and re-sending `seek=0` while a session exists is accepted, so
+>   falling back to a full re-send is always safe. `zs up` defaults to `--resume`
+>   with a `--no-resume` escape hatch. The old note here that the parameter set
+>   was unknown and naive guesses returned `N001212` is obsolete — `path` +
+>   `uuid` alone suffice.
+> - ❌ **Parallel slice upload — answered no, deliberately not implemented**
+>   (issue #11). `uploadProcess: 4` is how many *files* upload at once, not
+>   slices of one file: it has exactly one read site in the whole `app.asar`,
+>   inside `UploadCenter.uploadNext()`. Measured on a real NAS (12 MB / six
+>   2 MB slices): sequential 11.27 s and 4-thread in-order 10.41 s both
+>   round-trip MD5-identical, but reverse order gave 4× `N001530 无法断点续传`
+>   plus a 502 and a file that **still downloaded with the wrong MD5** — silent
+>   corruption. The in-order speedup was ~8%, not 2–4×, because RTT is not the
+>   bottleneck on a local proxy. Full write-up in
+>   `skills/zspace-nas/api-reference.md` so nobody re-runs it. Still untested:
+>   the high-latency relay case this entry was actually about.
+> - **Post-upload integrity check** — shipped as `zs up --verify` (downloads the
+>   file back and compares MD5; opt-in so the default path is unchanged).
+>   `POST /v2/file/hash` was *not* used: it is defined in `app.asar` but never
+>   called anywhere in the bundle, so its contract is unknown.
+> - **`config.json` overlay ported to all 8 scanners** (#47 → #52 → #54, roadmap
+>   #15, now ticked in both READMEs). `nas-report` stays out deliberately.
+>   The key set is *not* uniform, and that is on purpose: `whitelist_dirs` means
+>   "this structure is intentional, don't flag it" and only exists in the five
+>   scanners that judge directory-name compliance; the other three get `skip_dirs`
+>   ("don't descend"), and `dedup-finder` — having no extension tables at all —
+>   gets `prefer_keep_hints` instead. Giving all eight the same key with different
+>   meanings would make a config copied between skills behave surprisingly.
+>   The family table in `skills/README.md` records which keys each skill accepts
+>   and what a hit actually does, because `whitelist_dirs` has **four** distinct
+>   effects across those five (still counted as `protected` / whole subtree
+>   skipped / directory-name exemption only / "not a project").
 > - `photo-organizer --exif` (roadmap #14) — shells out to `exiftool`, falls back
 >   to macOS `mdls` (Spotlight), then to mtime; opt-in so the default path is
 >   byte-identical to before and the pure-stdlib rule still holds.

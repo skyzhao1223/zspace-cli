@@ -14,12 +14,14 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import re
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import NoReturn
 
 MAX_DEPTH = 6
 
@@ -58,6 +60,131 @@ WHITELIST_DIRS = {
     "archive", "archives", "templates", "shared", "public", "references",
     "docs", "admin", "hr", "finance", "tools", "software", "inbox", "outbox",
 }
+
+# ── 可选覆盖层:config.json(与本脚本同目录)────────────────────────────
+# 「装 skill」是逐目录 copytree(cli.py 的 zs skill,加 --only 也一样),共享模块
+# 装不进用户目录,所以这一段在每个 scanner 里逐字重复 —— 要改就全局搜索替换,
+# 别只改一处。唯一 per-skill 的部分是下面的 CONFIG_EXT_TABLES:类别名 → 本 skill
+# 的扩展名集合;值为 None 表示「不属于任何集合」,即本 skill 的兜底类别。
+CONFIG_NAME = "config.json"
+CONFIG_KEYS = ("whitelist_dirs", "extension_overrides")
+CONFIG_WHITELIST: list[str] = []      # whitelist_dirs 追加到这里(不替换内置)
+CONFIG_INFO: dict[str, object] = {}   # 非空 = 真加载了配置,回写进 stats 供核对
+CONFIG_EXT_TABLES: dict[str, set[str] | None] = {
+    "doc": DOC_EXTS, "sheet": SHEET_EXTS, "ppt": PPT_EXTS, "pdf": PDF_EXTS,
+    "archive": ARCHIVE_EXTS, "installer": INSTALLER_EXTS,
+    "design": DESIGN_EXTS, "code": CODE_EXTS, "media": MEDIA_EXTS,
+    "junk": JUNK_EXTS, "other": None,
+}
+# 10 张表两两不相交(实测过),所以「先摘掉再放进」在这里不会误伤别的类别。
+
+
+def _cfg_die(path: Path, msg: str) -> NoReturn:
+    """配置有问题就**立刻退出**,并指名是哪个文件、哪个键。
+
+    静默忽略一份用户以为生效了的配置是最坏的失败方式:扫描会继续标记他刚加进
+    白名单的目录,而且不给任何解释。
+    """
+    raise SystemExit(f"❌ 配置文件 {path} 无效:{msg}")
+
+
+def _cfg_match(rel_parts: list[str], patterns: list[str]) -> bool:
+    """目录是否命中白名单模式。锚定在 --root,大小写不敏感。
+
+    模式匹配「整段相对路径」**或**「任一级目录名」即命中,fnmatch 的 `*` 会跨过
+    `/`。所以 `原盘/*` 命中 <root>/原盘/VIDEO_TS,但不命中 <root>/x/原盘;不含
+    `/` 的 `原盘` 命中任意深度的同名目录。命中一个目录即命中它的整棵子树。
+    绝对路径永远匹配不上,load_config 会直接报错而不是让你以为它生效了。
+    """
+    if not patterns or not rel_parts:
+        return False
+    joined = "/".join(rel_parts).lower()
+    for pat in patterns:
+        low = pat.lower()
+        if fnmatch.fnmatch(joined, low):
+            return True
+        if any(fnmatch.fnmatch(p.lower(), low) for p in rel_parts):
+            return True
+    return False
+
+
+def load_config(script_dir: Path | None = None) -> None:
+    """读同目录的 config.json,把两个键**并入**内置默认值(不替换)。
+
+    文件不存在 → 立刻返回:没有 config.json 时本 scanner 的输出与引入这段代码
+    之前**逐字节一致**。合并语义、模式锚定规则、报错行为逐条写在 SKILL.md 的
+    「配置覆盖(config.json)」一节。校验全部跑完才动手改内置集合 —— 半途退出
+    会留下一张只改了一半的表,那比直接报错难查得多。
+    """
+    path = (script_dir or Path(__file__).resolve().parent) / CONFIG_NAME
+    if not path.is_file():
+        return
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as e:
+        _cfg_die(path, f"读不了这个文件:{e}")
+    except ValueError as e:
+        _cfg_die(path, f"不是合法 JSON(空文件也算):{e}")
+    if not isinstance(raw, dict):
+        _cfg_die(path, f"顶层必须是 JSON 对象,实际是 {type(raw).__name__}")
+    unknown = sorted(set(raw) - set(CONFIG_KEYS))
+    if unknown:
+        _cfg_die(path, f"未知键 {', '.join(unknown)};可用键只有 "
+                 f"{', '.join(CONFIG_KEYS)}。宁可报错也不警告后忽略 —— 键名拼错"
+                 "一个字母就会让整份配置静默失效,而用户看不出任何区别")
+    wl = raw.get("whitelist_dirs", [])
+    if not isinstance(wl, list):
+        _cfg_die(path, f"whitelist_dirs 必须是字符串数组,实际是 "
+                 f"{type(wl).__name__}(只有一条也要写成 [\"原盘\"])")
+    for i, item in enumerate(wl):
+        if not isinstance(item, str):
+            _cfg_die(path, f"whitelist_dirs[{i}] 必须是字符串,实际是 "
+                     f"{type(item).__name__}")
+        pat = item.strip()
+        if not pat:
+            _cfg_die(path, f"whitelist_dirs[{i}] 是空字符串")
+        if pat.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:[\\/]", pat):
+            _cfg_die(path, f"whitelist_dirs[{i}] 写成了绝对路径 {item!r};"
+                     "模式锚定在 --root,只能写相对路径(如 原盘/*)")
+    ext = raw.get("extension_overrides", {})
+    if not isinstance(ext, dict):
+        _cfg_die(path, f"extension_overrides 必须是对象,实际是 "
+                 f"{type(ext).__name__}")
+    pairs: list[tuple[str, str]] = []
+    for key, cat in ext.items():
+        if not isinstance(cat, str):
+            _cfg_die(path, f"extension_overrides[{key!r}] 必须是字符串类别名,"
+                     f"实际是 {type(cat).__name__}")
+        e = key.strip().lstrip(".").lower()
+        if not e:
+            _cfg_die(path, f"extension_overrides 的键 {key!r} 归一化后是空的")
+        if "." in e:
+            _cfg_die(path, f"extension_overrides 的键 {key!r} 含多个点:扩展名只取"
+                     f"文件名最后一段(tar.gz 的扩展名是 gz),请写成 "
+                     f"{e.rsplit('.', 1)[-1]!r}")
+        if cat not in CONFIG_EXT_TABLES:
+            _cfg_die(path, f"extension_overrides[{key!r}] 的类别 {cat!r} 本 skill "
+                     f"不认识;可用类别:{', '.join(sorted(CONFIG_EXT_TABLES))}")
+        pairs.append((e, cat))
+    # 校验全过才动手。扩展名先从别的表里摘掉再放进指定的那一张,否则
+    # categorize() 的判定阶梯会按它自己的顺序命中旧类别,覆盖看起来没生效。
+    CONFIG_WHITELIST.extend(item.strip() for item in wl)
+    for e, cat in pairs:
+        for name, table in CONFIG_EXT_TABLES.items():
+            if table is not None and name != cat:
+                table.discard(e)
+        target = CONFIG_EXT_TABLES[cat]
+        if target is not None:
+            target.add(e)
+    CONFIG_INFO.update({
+        "path": str(path),
+        "whitelist_dirs": list(CONFIG_WHITELIST),
+        "extension_overrides": dict(pairs),
+    })
+    print(f"ℹ️ 已加载覆盖配置 {path}(whitelist_dirs {len(wl)} 条,"
+          f"extension_overrides {len(pairs)} 条)", file=sys.stderr)
+
+
 ARCHIVE_DIR_RE = re.compile(r"归档|存档|archive|Archive|旧资料|backup", re.I)
 
 BAD_DIR = re.compile(
@@ -174,7 +301,12 @@ class Scanner:
                     continue
                 self.stats["dirs"] += 1
                 child_rel = rel_parts + [name]
-                problems = dir_problems(name, len(child_rel))
+                # config.json 的 whitelist_dirs:命中即豁免目录名校验 —— 与内置
+                # WHITELIST_DIRS 在 dir_problems() 里的作用完全相同(只是多了 glob、
+                # 大小写不敏感、可锚定在任意深度)。dir_problems() 的签名与函数体
+                # 一行没改,所以直接调它的那批纯函数断言不受影响。
+                problems = ([] if _cfg_match(child_rel, CONFIG_WHITELIST)
+                            else dir_problems(name, len(child_rel)))
                 if problems:
                     self._add(child_rel, name, True, problems)
                 self._walk(entry.path, child_rel)
@@ -321,6 +453,12 @@ class Scanner:
             f'扫描完成: {self.stats["dirs"]} 目录, {self.stats["files"]} 文件\n',
             file=sys.stderr,
         )
+        if CONFIG_INFO:
+            # 只在真加载了 config.json 时才多这一个键:没有配置文件时 JSON 与
+            # 引入覆盖层之前逐字节一致(smoke 里有负控制专门盯这件事)。
+            # 本 skill 的白名单只豁免目录名、不跳过子树(与内置 WHITELIST_DIRS
+            # 相同),所以这里没有 photo/music 那个 skipped_files 字段。
+            self.stats["config"] = dict(CONFIG_INFO)
         return {
             "skill": "work-organizer",
             "root": str(self.root),
@@ -431,6 +569,11 @@ def main() -> None:
     if args.cmd != "scan":
         print(f"未知命令: {args.cmd}", file=sys.stderr)
         raise SystemExit(1)
+
+    # 可选覆盖层:同目录 config.json。没有这个文件时下面这行什么都不做,
+    # classify_ext() 的 10 张表与 WHITELIST_DIRS 一个都不变,
+    # 输出与引入覆盖层之前逐字节一致。
+    load_config()
 
     scanner = Scanner(args.root, args.max_depth, args.sample,
                       args.strict_naming, args.archive_years)

@@ -1166,6 +1166,7 @@ class ZSpaceClient:
         new_name: str | None = None,
         progress: ProgressCallback | None = None,
         verify: bool = False,
+        resume: bool = True,
     ) -> dict[str, Any]:
         """Upload a local file to a directory on the NAS.
 
@@ -1174,6 +1175,8 @@ class ZSpaceClient:
         ``new_name``   — optional target filename (defaults to local basename).
         ``progress``   — optional callback ``(bytes_done, bytes_total)``.
         ``verify``     — download the uploaded file and compare its MD5 with the local file.
+        ``resume``     — for sliced uploads, ask the NAS how many bytes it already
+                         accepted for this session and skip them (see _tmpinfo_size).
 
         Small files go through ``/v2/file/create`` in a single request. Large
         files (> ``slice_threshold``) use the desktop client's sliced
@@ -1189,7 +1192,7 @@ class ZSpaceClient:
         total = local.stat().st_size
 
         if total > self.slice_threshold:
-            result = self._upload_sliced(local, target, total, progress)
+            result = self._upload_sliced(local, target, total, progress, resume)
             return self._finish_upload(result, local, target, verify)
 
         last_exc: BaseException | None = None
@@ -1214,7 +1217,7 @@ class ZSpaceClient:
                 except httpx.HTTPStatusError as exc:
                     if exc.response.status_code == 413:
                         # body too large for the local proxy — switch to slices
-                        result = self._upload_sliced(local, target, total, progress)
+                        result = self._upload_sliced(local, target, total, progress, resume)
                         return self._finish_upload(result, local, target, verify)
                     if not self._is_retryable(exc) or attempt >= self.max_retries:
                         raise
@@ -1256,12 +1259,50 @@ class ZSpaceClient:
                 f"上传校验失败: MD5 不匹配 (local={local_md5}, remote={remote_md5})",
             )
 
+    def _tmpinfo_size(self, target: str, uuid: str, total: int) -> int:
+        """Bytes the NAS already accepted for this upload session, else 0.
+
+        ``GET /v2/file/tmpinfo?path=<target>&uuid=<uuid>`` returns the partial
+        upload's temporary entry while a session is open. The desktop client
+        reads ``data.size`` as ``finishedSize`` and resumes from it; the temp
+        object is a hidden dotfile named ``.<name>.z<session id>`` beside the
+        target. Measured against a real NAS: after three 2 MB slices the
+        endpoint reports ``size == "6291456"``, and once the upload completes
+        the session is consumed and the same query answers ``N001315``
+        (文件不存在) — so "no session" and "already finished" are the same
+        signal, and both mean start over.
+
+        Any failure here must not fail the upload: resume is an optimisation,
+        and re-sending from zero is accepted even when a partial session exists
+        (measured: a slice at ``seek=0`` after one slice had landed returns 200
+        and the reported size does not go backwards).
+        """
+        try:
+            body = self._send(
+                "GET", "/v2/file/tmpinfo", params={"path": target, "uuid": uuid}
+            )
+        except ZSpaceError:
+            return 0
+        raw = (body.get("data") or {}).get("size")
+        if not isinstance(raw, (str, int)):
+            return 0
+        try:
+            size = int(raw)
+        except (TypeError, ValueError):
+            return 0
+        # Only trust a strict partial offset. size >= total would mean nothing
+        # left to send, but the NAS assembles the target only when the final
+        # slice lands, so skipping every slice could leave no file at all; fall
+        # back to a full re-send, which the measurement above shows is safe.
+        return size if 0 < size < total else 0
+
     def _upload_sliced(
         self,
         local: Path,
         target: str,
         total: int,
         progress: ProgressCallback | None = None,
+        resume: bool = True,
     ) -> dict[str, Any]:
         """Sliced upload via /v2/file/upload — the desktop client's protocol.
 
@@ -1275,8 +1316,13 @@ class ZSpaceClient:
         mtime_ms = math.ceil(st.st_mtime * 1000)
         uuid = _upload_uuid(mtime_ms, total, target)
         modify_time = math.ceil(mtime_ms / 1000)
-        sent = 0
+        sent = self._tmpinfo_size(target, uuid, total) if resume else 0
+        sent_resume = sent
         with local.open("rb") as fh:
+            if sent:
+                fh.seek(sent)
+                if progress is not None:
+                    progress(sent, total)
             while sent < total:
                 length = min(self.slice_size, total - sent)
                 body = fh.read(length)
@@ -1313,7 +1359,14 @@ class ZSpaceClient:
                 sent += length
                 if progress is not None:
                     progress(sent, total)
-        return {"path": target, "name": target.rsplit("/", 1)[-1], "size": total}
+        result: dict[str, Any] = {
+            "path": target, "name": target.rsplit("/", 1)[-1], "size": total,
+        }
+        if sent_resume:
+            # Only present when bytes were actually skipped, so the common path
+            # keeps returning exactly the shape callers (and tests) already see.
+            result["resumed_from"] = sent_resume
+        return result
 
     def _post_slice(self, url: str, body: bytes, headers: dict[str, str]) -> dict[str, Any]:
         """POST one upload slice, retrying transient failures like _send().
@@ -1417,6 +1470,189 @@ class ZSpaceClient:
             acc.append(node)
             if e.is_dir:
                 self._tree_walk(e.path, depth + 1, max_depth, acc, seen)
+
+    # ── Baidu NetDisk (百度网盘) — /znetdisk/* ──
+    #
+    # The NAS ships an official Baidu NetDisk module; the desktop proxy exposes
+    # it under /znetdisk/* with the same auth (common params + cookie set) and
+    # the same {code:"200", msg, data} envelope as the file API — measured
+    # live on a real NAS (2026-10, issue #12) — so _post()/_check_response()
+    # apply unchanged. Endpoint and parameter shapes come from the NAS-side
+    # web app's API module (Vue chunk 64392, module 2934) and its call sites;
+    # confidence notes live in skills/zspace-nas/api-reference.md.
+    #
+    # Deliberately NOT wrapped: the mutating and/or membership-gated endpoints
+    # (share/transfer, share/transfer_result, file/download, file/upload,
+    # file/newdir, sync/*, autobackup/*, membership/active, order/*,
+    # auth/token, auth/logout). Transfer/download are server-gated behind the
+    # paid 百度NAS会员 (non-members get code 15, and non-VIP file/download
+    # tasks were observed stalled at 0 B/s), and none of them can be verified
+    # without changing remote state — they are documented, not automated.
+
+    def baidu_check(self) -> dict[str, Any]:
+        """Whether a Baidu account is linked to the NAS's NetDisk module.
+
+        ``POST /znetdisk/auth/check`` with no business params. Returns
+        ``data`` — ``is_login`` (bool) and ``url`` (the Baidu OAuth page the
+        web UI opens to start linking when ``is_login`` is false; the linking
+        flow itself is browser-driven and not wrapped here).
+        """
+        return self._post("/znetdisk/auth/check")["data"]
+
+    def baidu_userinfo(self) -> dict[str, Any]:
+        """Linked Baidu account profile and quota.
+
+        ``POST /znetdisk/auth/userinfo`` with no business params. Returns
+        ``data``: ``user_info`` carries ``uk``/``baidu_name``/
+        ``netdisk_name``/``avatar_url``/``vip_type`` (Baidu's own
+        membership)/``iot_vip_type`` (百度NAS会员 — ``1`` unlocks share
+        transfer; the server rejects non-members with code 15)/
+        ``iot_vip_end_time``; ``quota`` carries ``used``/``total`` byte
+        counts; ``iot_vip_cashier`` is the membership purchase URL. Field
+        names measured live; meaningful only when baidu_check() reports
+        ``is_login``.
+        """
+        return self._post("/znetdisk/auth/userinfo")["data"]
+
+    def baidu_ls(self, path: str = "/", page_size: int = 50) -> list[dict[str, Any]]:
+        """List a directory of the linked Baidu pan (through the NAS module).
+
+        ``POST /znetdisk/file/list`` with ``{path, page, limit}`` — ``page``
+        is 1-based and pages are fetched until a short one, the stop rule the
+        web UI uses. Entries are raw Baidu-shaped dicts: ``fs_id``,
+        ``server_filename``, ``path``, ``size``, ``isdir`` (int 0/1),
+        ``category``, ``server_mtime``. Note the own-pan ``fs_id`` key —
+        baidu_share_list() entries spell it ``fsid`` instead.
+        """
+        entries: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            body = self._post("/znetdisk/file/list", {
+                "path": path,
+                "page": str(page),
+                "limit": str(page_size),
+            })
+            rows = (body.get("data") or {}).get("list") or []
+            entries.extend(rows)
+            if len(rows) < page_size:
+                break
+            page += 1
+        return entries
+
+    def baidu_share_verify(self, short_url: str, pwd: str = "") -> str:
+        """Verify a Baidu share link server-side; return the verified password.
+
+        ``POST /znetdisk/share/verify`` with ``{short_url, pwd}`` — ``pwd``
+        (提取码) travels plaintext; the web UI only trims surrounding
+        whitespace before sending. Returns ``data.spwd``, the verified
+        password that baidu_share_list() needs in place of the raw ``pwd``.
+        """
+        body = self._post(
+            "/znetdisk/share/verify", {"short_url": short_url, "pwd": pwd}
+        )
+        return str((body.get("data") or {}).get("spwd", ""))
+
+    def baidu_share_list(
+        self,
+        short_url: str,
+        spwd: str = "",
+        path: str = "/",
+        page_size: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List entries inside a Baidu share link (no local Baidu cookie).
+
+        ``POST /znetdisk/share/filelist`` with ``{short_url, spwd, path,
+        page, limit}`` — the NAS verifies and reads the share server-side;
+        ``path`` navigates inside the share (root ``/``). Entries carry
+        ``fsid`` — NOT the ``fs_id`` key baidu_ls() returns — plus
+        ``server_filename``, ``size``, ``md5``, ``isdir``. Pages are fetched
+        until a short one.
+        """
+        entries: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            body = self._post("/znetdisk/share/filelist", {
+                "short_url": short_url,
+                "spwd": spwd,
+                "path": path,
+                "page": str(page),
+                "limit": str(page_size),
+            })
+            rows = (body.get("data") or {}).get("list") or []
+            entries.extend(rows)
+            if len(rows) < page_size:
+                break
+            page += 1
+        return entries
+
+    def baidu_tasks(self, state: str = "", page_size: int = 50) -> list[dict[str, Any]]:
+        """List the NetDisk module's transfer tasks (Baidu pan ↔ NAS).
+
+        ``POST /znetdisk/task/list`` with ``{page, limit, state}`` —
+        ``state`` filters: ``""`` (all, default) / ``running`` / ``done`` /
+        ``pause`` / ``fail``, matching the web UI's tabs. Tasks are raw
+        dicts carrying ``task_id``, ``name``, ``down_state`` (1 downloading,
+        2 paused, 4 done, 6 queued, 9/10 backup preparing; "retrying" is
+        ``down_state == 1`` with ``retry_times > 0``),
+        ``download_size``/``total_size``/``rate``, ``save_path``, and the
+        failure fields ``fail_num``/``fail_reason``/``baidu_limit``/
+        ``space_fulle``. Pages are fetched until a short one.
+        """
+        entries: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            body = self._post("/znetdisk/task/list", {
+                "state": state,
+                "page": str(page),
+                "limit": str(page_size),
+            })
+            rows = (body.get("data") or {}).get("list") or []
+            entries.extend(rows)
+            if len(rows) < page_size:
+                break
+            page += 1
+        return entries
+
+    def baidu_fail_list(
+        self, task_id: str | None = None, page_size: int = 50
+    ) -> list[dict[str, Any]]:
+        """List files that failed inside NetDisk transfer tasks.
+
+        ``POST /znetdisk/fail/list`` with ``{page, limit}`` plus ``task_id``
+        to scope to one task (omitted = every task's failures). Entries carry
+        ``file_name``, ``file_path``, ``fail_reason``, ``baidu_fail_code``,
+        ``advice``, ``retry_times``, ``save_path``, ``task_id``. Pages are
+        fetched until a short one.
+        """
+        entries: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            extra: dict[str, Any] = {"page": str(page), "limit": str(page_size)}
+            if task_id is not None:
+                extra["task_id"] = task_id
+            body = self._post("/znetdisk/fail/list", extra)
+            rows = (body.get("data") or {}).get("list") or []
+            entries.extend(rows)
+            if len(rows) < page_size:
+                break
+            page += 1
+        return entries
+
+    def baidu_task_action(self, method: str, task_id: str | None = None) -> dict[str, Any]:
+        """Act on NetDisk transfer tasks — mutates remote task state.
+
+        ``POST /znetdisk/task/action`` with ``{method}`` plus ``task_id``
+        for the per-task operations. Methods observed in the web UI:
+        ``resume``/``pause``/``clean`` (single task, needs ``task_id``) and
+        ``pause_all``/``resume_all``/``clean_all``/``clean_all_done``/
+        ``resume_fail_all``/``clean_fail_all`` (bulk, ``task_id`` omitted).
+        ``clean*`` deletes task records — no undo. Returns the full response
+        body.
+        """
+        extra: dict[str, Any] = {"method": method}
+        if task_id is not None:
+            extra["task_id"] = task_id
+        return self._post("/znetdisk/task/action", extra)
 
 
 def _file_md5(path: Path, chunk_size: int = 1024 * 1024) -> str:
