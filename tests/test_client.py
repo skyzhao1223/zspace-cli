@@ -180,6 +180,7 @@ def test_upload_missing_local_file(client, tmp_path):
 def test_download_writes_file(client, tmp_path):
     resp = MagicMock()
     resp.raise_for_status.return_value = None
+    resp.headers = {"content-type": "application/octet-stream", "content-length": "10"}
     resp.iter_bytes.return_value = iter([b"file-", b"bytes"])
     client._http.stream.return_value.__enter__.return_value = resp
     out = client.download("/dst/hello.txt", tmp_path)
@@ -188,6 +189,67 @@ def test_download_writes_file(client, tmp_path):
     # request carries path and remote_port params
     _, kwargs = client._http.stream.call_args
     assert kwargs["params"]["path"] == "/dst/hello.txt"
+
+
+def test_download_json_file_is_not_mistaken_for_error(client, tmp_path):
+    """The NAS serves real .json files as octet-stream, so they must be written verbatim."""
+    payload = b'{"code": "200", "V2EX": [{"cookie": "x"}]}'
+    resp = MagicMock()
+    resp.raise_for_status.return_value = None
+    resp.headers = {
+        "content-type": "application/octet-stream",
+        "content-length": str(len(payload)),
+        "content-disposition": 'attachment; filename="config.json"',
+    }
+    resp.iter_bytes.return_value = iter([payload])
+    client._http.stream.return_value.__enter__.return_value = resp
+    out = client.download("/dst/config.json", tmp_path)
+    assert out.read_bytes() == payload
+
+
+def test_download_directory_raises_instead_of_writing_error_body(client, tmp_path):
+    """ZSpace answers "path is a directory" with HTTP 200 + a JSON envelope.
+
+    The old code streamed that envelope to disk and reported success, so a
+    scripted backup could "succeed" while writing a 107-byte error message.
+    """
+    envelope = b'{"code":"N001533","ts":1,"msg":"only files","reason":"","suggest":"","data":null}'
+    resp = MagicMock()
+    resp.raise_for_status.return_value = None
+    resp.headers = {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": str(len(envelope)),
+    }
+    resp.read.return_value = envelope
+    client._http.stream.return_value.__enter__.return_value = resp
+    with pytest.raises(ZSpaceError) as ei:
+        client.download("/dst/somedir", tmp_path)
+    assert ei.value.code == "N001533"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_download_missing_file_raises_and_leaves_no_partial(client, tmp_path):
+    resp = MagicMock()
+    resp.raise_for_status.return_value = None
+    resp.headers = {"content-type": "application/json"}
+    resp.read.return_value = b'{"code":"N001315","msg":"not found"}'
+    client._http.stream.return_value.__enter__.return_value = resp
+    with pytest.raises(ZSpaceError) as ei:
+        client.download("/dst/nope.txt", tmp_path)
+    assert ei.value.code == "N001315"
+    assert not (tmp_path / "nope.txt").exists()
+
+
+def test_download_json_content_without_error_code_is_kept(client, tmp_path):
+    """A JSON content-type carrying no error code must not be silently dropped."""
+    body = b'{"hello": "world"}'
+    resp = MagicMock()
+    resp.raise_for_status.return_value = None
+    resp.headers = {"content-type": "application/json"}
+    resp.read.return_value = body
+    client._http.stream.return_value.__enter__.return_value = resp
+    out = client.download("/dst/odd.json", tmp_path)
+    assert out.read_bytes() == body
 
 
 def test_file_entry_from_api():
