@@ -223,13 +223,18 @@ w("源文件/B.bin", PB, 100)                 # 内置提示词 + 浅 + 新
 w("散落/深/更深/B.bin", PB, 900)            # 无提示词 + 深 + 旧 → 基线就是 drop
 
 # ---- C 组:7 份,跨 0~3 层,用来断言完整排序而不只是第一名 ----
-w("成品/C.bin", PC, 500)                   # 内置提示词
-w("照片/C.bin", PC, 400)
-w("照片/子目录/C 副本.bin", PC, 300)
-w("下载/C(1).bin", PC, 200)
-w("工作/终稿/深层/C.bin", PC, 100)
-w("临时/C.bin", PC, 600)                   # skip_dirs 靶子
-w("临时/2024/C.bin", PC, 610)               # skip_dirs 锚定靶子
+# 年龄**刻意与深度打架**:临时/2024(depth 2)比 临时(depth 1)更旧,
+# 工作/终稿/深层(depth 3)是全局最新。所以 keep_rank 的 depth 那一层是**载荷性**的
+# —— 它一旦失效(相对路径退回反斜杠时就是如此,见 SKILL.md「路径分隔符」),
+# 下面手推的 EXPECT_C 立刻就不对。**不要把年龄改成"越浅越旧"来让它看起来更整齐**,
+# 那会让 depth 层变得不可观测,顺带把那个分隔符修复的唯一非 Windows 护栏拆掉。
+w("成品/C.bin", PC, 500)                   # 内置提示词,depth 1
+w("照片/C.bin", PC, 400)                   # depth 1
+w("照片/子目录/C 副本.bin", PC, 300)         # depth 2
+w("下载/C(1).bin", PC, 200)                 # depth 1,这一层里最新
+w("工作/终稿/深层/C.bin", PC, 100)           # depth 3,全局最新
+w("临时/C.bin", PC, 600)                   # depth 1,全局最旧(skip_dirs 靶子)
+w("临时/2024/C.bin", PC, 610)               # depth 2,比 临时/C.bin 更旧(锚定靶子)
 
 # ---- D 组:大小写不敏感要**双向**测,所以用两个不同名字的目录 ----
 w("SAMPLES/D.bin", PD, 300)
@@ -656,11 +661,26 @@ ranked = sorted([{"path": "工作/终稿/深层/A.bin", "name": "A.bin", "mtime"
                  {"path": "浅层/A.bin", "name": "A.bin", "mtime": 100}],
                 key=dfmod.keep_rank)
 assert ranked[0]["path"] == "工作/终稿/深层/A.bin", ranked
+
+# keep_rank 的 depth 层数的是 "/",所以 _walk 里那句 .replace(os.sep, "/") 是
+# **载荷性的**,不是美化:少了它,Windows 上每条路径的 depth 都是 0,「浅路径优先」
+# 整条规则失效。这里把两边的契约钉在一起 —— 直接喂路径给纯函数,**不依赖 runner**,
+# 所以在 ubuntu / macOS 上也验得到,不用等 windows-latest 才发现。
+BSL = chr(92)
+assert dfmod.keep_rank({"path": "a/b/c.bin", "name": "c.bin", "mtime": 1})[1] == 2
+assert dfmod.keep_rank({"path": f"a{BSL}b{BSL}c.bin", "name": "c.bin", "mtime": 1})[1] == 0
+# 正斜杠时浅的赢,反斜杠时深的赢 —— 后者就是修复前 Windows 上的实际行为
+assert dfmod.keep_rank({"path": "G.bin", "name": "G.bin", "mtime": 9}) \
+    < dfmod.keep_rank({"path": "a/b/c/G.bin", "name": "G.bin", "mtime": 1})
+assert dfmod.keep_rank({"path": "G.bin", "name": "G.bin", "mtime": 9}) \
+    > dfmod.keep_rank({"path": f"a{BSL}b{BSL}c{BSL}G.bin", "name": "G.bin", "mtime": 1})
 msg = err.getvalue()
 assert "已加载覆盖配置" in msg and str(good_dir / "config.json") in msg, msg
 assert "skip_dirs 1 条" in msg and "prefer_keep_hints 2 条" in msg, msg
 print("  ✓ 校验先于写入:坏配置退出后 PREFER_KEEP_HINTS 与 CONFIG_* 全都没动;"
       "追加时与内置重复的条目不会重复出现")
+print("  ✓ 契约钉住:keep_rank 的 depth 只数 '/',所以 _walk 里的 os.sep 归一是"
+      "载荷性的(这条在任何 runner 上都验,不必等 windows-latest)")
 
 # -- 15. 锚定规则的纯函数证据(SKILL.md 那张表的来源)--------------------
 m = dfmod._cfg_match
