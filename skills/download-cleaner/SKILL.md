@@ -321,10 +321,6 @@ Windows 盘符两种)、`extension_overrides` 不是对象 / 类别值不是字�
 - **`config.json` 是 per-安装、不是 per-库**:一份安装对应一份配置。要给不同的
   下载区用不同的 `skip_dirs`,目前只能装两份 skill。加一个 `--config PATH` 是自然
   的后续,但它会引出「两处配置是替换还是叠加」这个新问题
-- **AppleDouble 文件根本进不了统计**(既有行为,本次没改):`_check_file` 对
-  「以 `.` 开头且不在 `JUNK_NAMES` 里」的文件提前 return,所以 `._xxx` 既不计入
-  `stats.files` 也不出 issue,而 `categorize()` 里那条 `startswith("._")` → junk
-  的规则经 CLI 走不到。要不要统一,交维护者决定
 - 「已解压」靠同名目录启发式,不比对压缩包内容与目录
 - 不解析压缩包内文件列表(需 zipfile 逐个读,大压缩包慢)
 - 重复下载只按名字 `(1)`/副本 识别,内容级重复走 dedup-finder

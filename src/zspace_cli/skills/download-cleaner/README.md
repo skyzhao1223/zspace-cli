@@ -270,12 +270,21 @@ Windows)会各自合并成一个,所以断言跟着实际存活的数量走;另�
 - **`config.json` 是 per-安装、不是 per-库**:要给不同下载区用不同的 `skip_dirs`,
   目前只能装两份 skill。加 `--config PATH` 是自然的后续,但它会引出「两处配置是替换
   还是叠加」这个新问题,所以没有夹在这个 PR 里做
-- **AppleDouble 文件根本进不了统计**(既有行为,本次**没改**):`_check_file` 对
-  「以 `.` 开头且不在 `JUNK_NAMES` 里」的文件提前 return,所以 `._xxx` 既不计入
-  `stats.files` 也不出 issue,而 `categorize()` 里那条 `startswith("._")` → junk
-  的规则经 CLI 走不到(只有直接调纯函数才看得到)。file-sorter 是把 `._*` 判成 junk
-  并计数的,两个 skill 在这一点上不一致。要不要统一交维护者决定 —— 任何一种改法都会
-  改变既有输出,与「零破坏性」直接冲突
+- ~~**AppleDouble 文件根本进不了统计**~~ → **已修**(#58):`_check_file` 原先写的是
+  `name.startswith(".") and name not in JUNK_NAMES` → return,于是 `.DS_Store`(在
+  `JUNK_NAMES` 里)能过、`._xxx`(不在)被提前 return,永远走不到 `categorize()` 里那条
+  `startswith("._")` → junk。**那条规则经 CLI 是死代码**,只有直接调纯函数才看得到,
+  所以纯函数测试一直是绿的、掩盖了这个问题。现在与 file-sorter 同序:先算
+  `is_junk_name = name in JUNK_NAMES or name.startswith("._")`,再对「点开头且非 junk」
+  早退,并且 junk 名不参与扩展名推断(`._pack.zip` 不该拿到 `zip`)。
+  **这会改变既有输出**:`stats.files`、`by_category.junk`、`reclaimable_bytes` 都会
+  把 `._*` 算进去 —— 这是修复的目的,不是回归。SKILL.md 那张用户可见的表本来就承诺
+  「垃圾 = `.DS_Store`、`._*`、`.tmp` → delete」,修复让它成真(此前表格与实现矛盾)。
+  smoke.sh 里原先钉住错误行为的那条 `assert "._movie.ass" not in bp` 已反转,并补了
+  负控制:`.hidden.torrent` / `.ignored.part` 两个**普通** dotfile 必须继续被忽略
+  (扩展名刻意选会产生 issue 的,否则「把早退整个删掉」也能通过 —— 第一版负控制用的
+  是 `.hidden_config`,它会被判成 other 且没有 problems、压根不出现在 issues 里,
+  实测无效)
 - 「已解压」靠同名目录启发式,不比对压缩包内容
 - 不解析压缩包内文件列表
 - 重复下载只按名字识别,内容级重复走 dedup-finder

@@ -294,11 +294,20 @@ class Scanner:
 
     def _check_file(self, entry: os.DirEntry, rel_parts: list[str],
                     name: str, sibling_dirs: set[str]) -> None:
-        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        # 判定顺序与 file-sorter 一致:**先**认出 junk 名,再决定要不要跳过点文件。
+        # 原先这里写的是 `name.startswith(".") and name not in JUNK_NAMES`,于是
+        # `.DS_Store`(在 JUNK_NAMES 里)能过、`._movie.ass`(不在)被提前 return,
+        # 永远走不到 categorize() 里那条 `startswith("._")` → junk —— 那条规则
+        # 经 CLI 是死代码,只有直接调纯函数才看得到(issue #58)。
+        is_junk_name = name in JUNK_NAMES or name.startswith("._")
+        if name.startswith(".") and not is_junk_name:
+            return                      # 普通 dotfile 静默忽略
+        # junk 名不参与扩展名推断:`._movie.ass` 不该拿到 `ass` 这个扩展名,
+        # 否则一旦 categorize() 的阶梯顺序变动,它就可能被判成字幕而不是垃圾。
+        ext = "" if is_junk_name else (
+            name.rsplit(".", 1)[-1].lower() if "." in name else "")
         stem = os.path.splitext(name)[0]
         full = "/".join(rel_parts + [name])
-        if name.startswith(".") and name not in JUNK_NAMES:
-            return
 
         try:
             st = entry.stat()

@@ -234,8 +234,18 @@ w("samples/other.mkv", "s2")         # 大小写不敏感(目录小写)
 CASE_DIRS = sorted(n for n in os.listdir(lib) if n.lower() == "samples"
                    and os.path.isdir(os.path.join(lib, n)))
 assert 1 <= len(CASE_DIRS) <= 2, CASE_DIRS
-w("._movie.ass", "appledouble")      # AppleDouble → junk
+w("._movie.ass", "appledouble")      # AppleDouble → junk(issue #58:曾经进不了统计)
+w("._pack.zip", "appledouble2")      # 第二个 AppleDouble:扩展名是 archive 类,
+                                     # 用来证明 junk 判定优先于扩展名阶梯
 w(".DS_Store", "junk")
+# 普通 dotfile(既不在 JUNK_NAMES 也不是 ._ 前缀)必须**继续**被静默忽略。
+# 这两条是上面那个修复的负控制。**扩展名刻意选 torrent / part**:如果早退被整个
+# 删掉,它们会被判成 torrent / partial 并**产生 issue**,于是下面 `not in bp` 就会
+# 失败。用 `.hidden_config` 这种名字是无效的负控制 —— 它会被判成 other 且没有
+# problems,压根不出现在 issues 里(实测:删掉早退后 stats.files 从 2 变 4、
+# by_category.other.count 变 2,而 issues 一条都没多)。
+w(".hidden.torrent", "plain-dotfile")
+w(".ignored.part", "plain-dotfile2")
 w("-rf-danger.tar.gz", "hostile")     # shell 危险名:前导 -
 w("  spaced name .txt", "hostile2")   # shell 危险名:首尾空格
 # 大小写撞名对:大小写不敏感的卷(macOS 默认 / Windows)上第二个会覆盖第一个,
@@ -325,11 +335,24 @@ assert bp["x.part"]["category"] == "partial"
 assert bp["pack.zip"]["category"] == "archive"
 assert any("已解压" in p for p in bp["pack.zip"]["problems"]), bp["pack.zip"]
 assert bp["site.iso"]["category"] == "other", bp["site.iso"]
-# AppleDouble:既有行为是 _check_file 对「以 . 开头且不在 JUNK_NAMES 里」的文件
-# 提前 return,所以 ._movie.ass 连 stats.files 都不进(categorize 里那条
-# startswith("._") 规则经 CLI 走不到)。本 PR 不改这个既有行为,只把它钉住。
-assert "._movie.ass" not in bp, sorted(bp)
+# AppleDouble(issue #58):_check_file 现在与 file-sorter 同序 —— 先认 junk 名
+# 再决定跳不跳点文件,所以 ._ 前缀的文件能走到 categorize() 并被判成 junk。
+for ap in ("._movie.ass", "._pack.zip"):
+    assert ap in bp, (ap, sorted(bp))
+    assert bp[ap]["category"] == "junk", bp[ap]
+    assert bp[ap]["action"] == "delete", bp[ap]
+# ._pack.zip 的扩展名在 ARCHIVE_EXTS 里,却仍判 junk —— 证明 junk 名优先于扩展名
+# 阶梯(也证明 _check_file 里对 junk 名把 ext 置空这一步是有意义的)
 assert bp[".DS_Store"]["category"] == "junk"            # JUNK_NAMES 里的点文件仍判 junk
+# 负控制:**普通** dotfile 仍被静默忽略。少了这两条,「把早退整个删掉」也能通过。
+# 断言 issues 与 stats 两处 —— 只查 issues 不够(见 fixture 那里的说明)。
+for plain in (".hidden.torrent", ".ignored.part"):
+    assert plain not in bp, (plain, sorted(bp))
+# 绝对数量断言:n_base_files 是从实现自己的输出读出来的,只能验 skip_dirs 的**增量**,
+# 钉不住绝对值。这里独立数一遍 —— 结果里以 ._ 开头的条目必须恰好是 fixture 那两个。
+assert sorted(p for p in bp if os.path.basename(p).startswith("._")) == \
+    ["._movie.ass", "._pack.zip"], sorted(bp)
+assert base["stats"]["by_category"]["junk"]["count"] >= 3, base["stats"]["by_category"]
 assert "临时/2024/old.torrent" in bp and "临时/loose.part" in bp
 assert "深层/临时/子目录/x.torrent" in bp
 assert ci_get(bp, "SAMPLES/sample.mkv")["category"] == "video"
