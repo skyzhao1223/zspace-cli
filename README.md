@@ -71,15 +71,25 @@ with ZSpaceClient() as zs:
 | `zs mv <src> <dest>` | Move a file/directory |
 | `zs cp <src> <dest>` | Copy a file/directory |
 | `zs mkdir <parent> <name>` | Create a directory |
-| `zs rm <path>` | Delete (`-f/--force` skips confirmation) |
+| `zs rm <path>` | Delete into the personal recycle bin (`-f/--force` skips confirmation). Pool space is **not** freed until `zs recycle empty` |
 | `zs find <keyword> [path]` | Full-text search across the NAS |
 | `zs tree [path]` | Tree view (`-d/--depth N`, default 2) |
+| `zs usage` | Storage profile — physical usage per pool, per user, per category. The only view that includes Time Machine backups, other users' spaces, and Docker/RAID overhead (`--refresh`, `--wait N`) |
+| `zs du <path>...` | Directory size via server-side statistics. Refuses to pass off a partial number as final when the NAS won't converge on a large tree; `--walk` forces an exact client-side traversal |
+| `zs disks` | Per-disk free space, temperature, health, fragmentation, power-on hours, plus empty bays |
+| `zs smart [sn]` | SMART report (`--all` for every disk) |
+| `zs recycle list` | Recycle bin contents with original locations (`--public` for the shared bin) |
+| `zs recycle restore <name>` | Restore items to their original location |
+| `zs recycle purge <name>` | Permanently delete only the named items (`-f/--force`) |
+| `zs recycle empty` | Purge the whole personal bin — irreversible, so it lists the contents first (`--public`, `-f`) |
+| `zs recycle config` | Retention policy; `-1` means never auto-purge (`--my-cycle N`, `--public-cycle N`) |
 | `zs up <local> <remote_dir>` | Upload (`-n/--name` to rename; `--verify` for post-upload MD5 round-trip verification; large files auto-switch to sliced upload) |
 | `zs down <path> [dir]` | Download |
 | `zs skill <dir>` | Copy Agent skills into a project (`--list`, `--only a,b`) |
 | `zs --config-dir <dir>` | Point at a non-default `vuex.json` location (or `ZS_CONFIG_DIR`) |
 
-`zs check`, `zs ls`, `zs info`, `zs find`, `zs tree` accept `--json` for
+`zs check`, `zs ls`, `zs info`, `zs find`, `zs tree`, `zs usage`, `zs du`,
+`zs disks`, `zs smart`, `zs recycle list/config` accept `--json` for
 machine-readable output. `zs mv`/`zs cp`/`zs rm`/`zs down` accept `* ?` glob
 patterns on the source path.
 
@@ -105,6 +115,11 @@ patterns on the source path.
 | Health check | `zs check` | `client.is_connected()` | `zspace_check` |
 | Storage pools | `zs check` | `client.pool_info()` | `zspace_pool_info` |
 | Disk diagnostics | — | `client.disk_stats()` | `zspace_disk_stats` |
+| Storage profile | `zs usage` | `client.usage_summary()` | — |
+| Directory size | `zs du <path>` | `client.statistic(path)` / `client.walk_stat(path)` | — |
+| Per-disk health | `zs disks` | `client.disks()` / `client.free_bays()` | — |
+| SMART report | `zs smart [sn]` | `client.smart(sn)` | — |
+| Recycle bin | `zs recycle list/restore/purge/empty/config` | `client.recycle_*()` | — |
 
 ---
 

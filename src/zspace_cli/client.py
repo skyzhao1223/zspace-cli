@@ -7,7 +7,7 @@ import math
 import random
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -93,6 +93,231 @@ class FileEntry:
             modify_time=d.get("modify_time", ""),
             create_time=d.get("create_time", ""),
             ext=d.get("ext", ""),
+        )
+
+
+# /v2/file/statistic reports both direct-child counts (``vnum``) and recursive
+# totals (``tvnum``). Only the recursive totals describe a subtree's contents,
+# so those are the ones surfaced as categories.
+_STAT_CATEGORIES: dict[str, str] = {
+    "视频": "tvnum",
+    "音频": "tanum",
+    "图片": "tinum",
+    "文档": "tdocnum",
+    "应用": "tappnum",
+    "压缩文件": "tcomnum",
+}
+
+# Human-readable names for the /system/diskusage3 labels. Several of these are
+# invisible to any file-level walk: Time Machine backups, the safe box, other
+# users' spaces, and the pool's own system data all live outside
+# ``/<pool>/my/data``, which is the only path a normal token can list.
+USAGE_LABELS: dict[str, str] = {
+    "my": "个人文件",
+    "my_tm": "Time Machine 备份",
+    "my_recycle": "个人回收站",
+    "my_safe": "保险箱",
+    "pub_recycle": "公共回收站",
+    "sys_raid": "池/RAID 元数据",
+    "sys_docker": "Docker",
+    "sys_vm": "虚拟机",
+    "sys_iscsi": "iSCSI",
+    "sys_other": "其他系统数据",
+}
+
+
+def _as_int(value: Any) -> int:
+    """Coerce an API numeric field, which may arrive as str, int, or None."""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+@dataclass
+class DirStat:
+    """Directory size/count statistics.
+
+    Two sources populate this, and telling them apart matters:
+
+    ``source="statistic"``
+        Server-side computation via ``/v2/file/statistic``. Fast (one request)
+        and exact for small-to-medium trees, but the NAS computes large trees
+        asynchronously and reports ``state="running"`` with a **partial and
+        fluctuating** snapshot. Measured on a 1.175 TiB / 448,687-file folder:
+        fourteen consecutive calls all returned ``running`` with ~0.35 TiB and a
+        file count jittering between 27,457 and 30,366 — never converging.
+        ``/v2/file/statistictask``, which looks like the matching poll endpoint,
+        returns an empty task and is useless for this.
+    ``source="walk"``
+        Client-side recursive walk of ``/v2/file/list``. Slow (~1 request per
+        directory) but always complete, so it is the fallback for large trees.
+
+    Never present a result as final without checking :attr:`complete`.
+    """
+
+    path: str
+    size: int = 0
+    files: int = 0
+    dirs: int = 0
+    state: str = ""
+    source: str = "statistic"
+    hidden_size: int = 0
+    hidden_files: int = 0
+    hidden_dirs: int = 0
+    categories: dict[str, int] = field(default_factory=dict)
+    requests: int = 0
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def complete(self) -> bool:
+        """True only when the numbers are final and safe to report."""
+        return self.state == "done"
+
+    @classmethod
+    def from_api(cls, path: str, task: dict[str, Any]) -> DirStat:
+        return cls(
+            path=path,
+            size=_as_int(task.get("size")),
+            files=_as_int(task.get("tfnum")),
+            dirs=_as_int(task.get("tdirnum")),
+            state=str(task.get("state") or ""),
+            hidden_size=_as_int(task.get("hidden_size")),
+            hidden_files=_as_int(task.get("hidden_fnum")),
+            hidden_dirs=_as_int(task.get("hidden_dirnum")),
+            categories={
+                label: _as_int(task.get(key))
+                for label, key in _STAT_CATEGORIES.items()
+                if _as_int(task.get(key))
+            },
+            raw=task,
+        )
+
+
+@dataclass
+class RecycleEntry:
+    """One item in a recycle bin.
+
+    ``path`` is the item's location *inside* the bin
+    (``/<pool>/.recycle/my/<name>``) and is what :meth:`ZSpaceClient.recycle_restore`
+    needs; ``original_path`` is where it lived before deletion.
+    """
+
+    name: str
+    path: str
+    original_path: str = ""
+    is_dir: bool = False
+    size: int = 0
+    modify_time: str = ""
+
+    @classmethod
+    def from_api(cls, d: dict[str, Any]) -> RecycleEntry:
+        return cls(
+            name=d.get("name", ""),
+            path=d.get("path", ""),
+            original_path=d.get("original_path", "") or "",
+            is_dir=d.get("is_dir") == "1",
+            size=_as_int(d.get("size")),
+            modify_time=str(d.get("modify_time", "") or ""),
+        )
+
+
+@dataclass
+class UsageEntry:
+    """One row of the /system/diskusage3 breakdown."""
+
+    kind: str      # "user" | "sys" | "public_recycle" | "public"
+    label: str     # my / my_tm / sys_docker / ...
+    size: int
+    owner: str = ""
+
+    @property
+    def label_cn(self) -> str:
+        return USAGE_LABELS.get(self.label, self.label)
+
+
+@dataclass
+class PoolUsage:
+    """Physical usage of one storage pool, summed across its disks.
+
+    ``/system/diskusage3`` returns one entry *per disk*, so a 3-disk pool
+    arrives as three entries that must be summed to match ``/zspool/info``'s
+    pool-level ``usage_size``.
+    """
+
+    pool: str
+    entries: list[UsageEntry] = field(default_factory=list)
+
+    @property
+    def total(self) -> int:
+        return sum(e.size for e in self.entries)
+
+    @property
+    def user_total(self) -> int:
+        return sum(e.size for e in self.entries if e.kind == "user")
+
+    @property
+    def system_total(self) -> int:
+        return sum(e.size for e in self.entries if e.kind != "user")
+
+    def by_owner(self) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for e in self.entries:
+            if e.kind == "user":
+                out[e.owner] = out.get(e.owner, 0) + e.size
+        return out
+
+
+@dataclass
+class DiskInfo:
+    """One physical disk, with the health fields worth surfacing."""
+
+    pool: str
+    position: str
+    model: str
+    sn: str
+    dev_type: str
+    mount: str
+    total_size: int
+    free_size: int
+    usage_size: int
+    health: str = ""
+    status: str = ""
+    temp: int = 0
+    power_on_hours: int = 0
+    reallocated_sectors: int = 0
+    fragment_pct: float = 0.0
+    suspected_smr: bool = False
+
+    @property
+    def used_pct(self) -> float:
+        return (self.usage_size / self.total_size * 100) if self.total_size else 0.0
+
+    @classmethod
+    def from_api(cls, pool: str, d: dict[str, Any]) -> DiskInfo:
+        smart = d.get("simple_smart") or {}
+        frag = d.get("fs_fragment") or {}
+        try:
+            frag_pct = float(frag.get("percentage") or 0.0)
+        except (TypeError, ValueError):
+            frag_pct = 0.0
+        return cls(
+            pool=pool,
+            position=str(d.get("pos", "")),
+            model=d.get("model", "") or "",
+            sn=d.get("sn", "") or "",
+            dev_type=d.get("dev_type", "") or "",
+            mount=d.get("mnt", "") or "",
+            total_size=_as_int(d.get("total_size")),
+            free_size=_as_int(d.get("free_size")),
+            usage_size=_as_int(d.get("usage_size")),
+            health=d.get("health", "") or "",
+            status=d.get("status", "") or "",
+            temp=_as_int(d.get("temp")),
+            power_on_hours=_as_int(smart.get("power_on_hours")),
+            reallocated_sectors=_as_int(smart.get("reallocated_sector_count")),
+            fragment_pct=frag_pct,
+            suspected_smr=bool(_as_int(d.get("suspected_smr"))),
         )
 
 
@@ -287,6 +512,377 @@ class ZSpaceClient:
         """Get disk statistics."""
         return self._post("/disk/statics")
 
+    # ── storage introspection ──
+    #
+    # These answer "where did my space go?" without walking the tree. They are
+    # the only way to see data that lives outside ``/<pool>/my/data``: a normal
+    # token gets N001411 on ``/recycle``, ``/<pool>/my`` and every other user's
+    # space, so a file-level walk systematically under-reports pool usage.
+
+    #: Virtual root that lists the personal recycle bin across all pools.
+    RECYCLE_MY = "/.recycle/my"
+    #: Virtual root of the public (family/shared) recycle bin.
+    RECYCLE_PUBLIC = "/.public_recycle"
+
+    def disk_usage(self) -> dict[str, Any]:
+        """Raw ``/system/diskusage3`` payload — physical usage per disk.
+
+        Breaks each disk down by user and by label (``my``, ``my_tm`` for Time
+        Machine, ``my_recycle``, ``my_safe``) plus system categories
+        (``sys_docker``, ``sys_raid``, ``sys_vm``, ``sys_iscsi``, ``sys_other``).
+        The figures are a periodically recomputed snapshot; see
+        :meth:`disk_usage_status` and :meth:`disk_usage_refresh`.
+
+        Only reachable from 127.0.0.1, i.e. through the desktop client proxy —
+        which is exactly how this SDK talks to the NAS.
+        """
+        return self._post("/system/diskusage3")
+
+    def disk_usage_status(self) -> dict[str, Any]:
+        """``{is_running, updated_at}`` for the disk-usage snapshot."""
+        return self._post("/system/diskusage/status")["data"]
+
+    def disk_usage_refresh(self) -> dict[str, Any]:
+        """Ask the NAS to recompute the disk-usage snapshot now.
+
+        Asynchronous: ``disk_usage_status()["is_running"]`` flips to 1 and the
+        new numbers appear once it finishes.
+        """
+        return self._post("/system/diskusage/runanyway")
+
+    def usage_summary(self) -> list[PoolUsage]:
+        """Per-pool physical usage, summed across disks and grouped by owner.
+
+        ``/system/diskusage3`` reports one entry per *disk*, and each carries
+        every user/label/sys row for that disk. Both levels are collapsed here:
+        disks are summed into their pool, and rows sharing ``(kind, owner,
+        label)`` are merged, so "my Time Machine in sata11" is one number
+        rather than one per spindle. Summing reproduces ``/zspool/info``'s
+        pool-level ``usage_size`` (verified to within 0.1%).
+        """
+        payload = self.disk_usage().get("data") or {}
+        acc: dict[str, dict[tuple[str, str, str], int]] = {}
+        for disk in payload.get("disk_usage") or []:
+            name = disk.get("pool_name") or disk.get("pool_key") or "?"
+            rows = acc.setdefault(name, {})
+
+            def bump(kind: str, label: str, size: int, owner: str = "") -> None:
+                if size:
+                    key = (kind, owner, label)
+                    rows[key] = rows.get(key, 0) + size
+
+            usage = disk.get("usage_v2") or {}
+            for user in usage.get("user") or []:
+                owner = (
+                    user.get("remark")
+                    or user.get("nickname")
+                    or user.get("username")
+                    or "?"
+                )
+                if user.get("is_master"):
+                    owner += " (主账号)"
+                for item in user.get("list") or []:
+                    bump("user", item.get("label", ""), _as_int(item.get("phy_size")), owner)
+            pub = usage.get("public_recycle") or {}
+            if isinstance(pub, dict):
+                bump("public_recycle", pub.get("label", "pub_recycle"),
+                     _as_int(pub.get("phy_size")))
+            for item in usage.get("public") or []:
+                bump("public", item.get("label", ""), _as_int(item.get("phy_size")))
+            for item in usage.get("sys") or []:
+                bump("sys", item.get("label", ""), _as_int(item.get("phy_size")))
+
+        return [
+            PoolUsage(
+                pool=name,
+                entries=sorted(
+                    (UsageEntry(kind, label, size, owner)
+                     for (kind, owner, label), size in rows.items()),
+                    key=lambda e: -e.size,
+                ),
+            )
+            for name, rows in acc.items()
+        ]
+
+    def statistic(self, path: str, show_hidden: bool = True) -> DirStat:
+        """Server-side size/count of one directory. See :class:`DirStat`.
+
+        Check ``result.complete`` before trusting the numbers: large trees come
+        back as ``state="running"`` with a partial snapshot that never
+        converges, and there is no working poll endpoint for it.
+        """
+        return self.statistic_many([path], show_hidden=show_hidden)
+
+    def statistic_many(self, paths: list[str], show_hidden: bool = True) -> DirStat:
+        """Server-side statistics for several directories in one request."""
+        body = self._post_with_array(
+            "/v2/file/statistic",
+            list(paths),
+            {"show_hidden": "1" if show_hidden else "0"},
+        )
+        task = (body.get("data") or {}).get("task") or {}
+        return DirStat.from_api(", ".join(paths), task)
+
+    def walk_stat(
+        self,
+        path: str,
+        show_hidden: bool = True,
+        workers: int = 8,
+        max_requests: int = 0,
+        progress: Callable[[int, int, int], None] | None = None,
+    ) -> DirStat:
+        """Recursively sum a subtree via ``/v2/file/list``.
+
+        The reliable fallback for trees too large for :meth:`statistic`. Costs
+        about one request per directory — the endpoint hard-caps at 50 entries
+        per page no matter what ``limit`` you pass (verified: ``limit=500`` still
+        returns 50) — so file count, not byte count, drives the runtime. A
+        448k-file / 89k-directory tree needed ~93k requests and 12 minutes at 16
+        workers; a 2.1M-file sync folder needed ~285k.
+
+        ``max_requests`` is a safety valve, not a budget to aim for: hitting it
+        marks the result ``state="partial"`` so callers cannot mistake a
+        truncated total for a real one.
+        """
+        import threading
+        from collections import deque
+        from concurrent.futures import ThreadPoolExecutor
+
+        lock = threading.Lock()
+        state = {"size": 0, "files": 0, "dirs": 0, "requests": 0, "truncated": False}
+        queue: deque[str] = deque([path])
+        outstanding = [1]
+        cv = threading.Condition()
+
+        def list_dir(target: str) -> list[dict[str, Any]]:
+            items: list[dict[str, Any]] = []
+            start = 0
+            while True:
+                with lock:
+                    state["requests"] += 1
+                    n = state["requests"]
+                if max_requests and n > max_requests:
+                    with lock:
+                        state["truncated"] = True
+                    return items
+                body = self._post(
+                    "/v2/file/list",
+                    {"path": target, "start": start, "limit": 50,
+                     "show_hidden": 1 if show_hidden else 0},
+                )
+                data = body.get("data") or {}
+                page = data.get("list") or []
+                items.extend(page)
+                start += len(page)
+                if not page or start >= _as_int(data.get("total")):
+                    return items
+
+        def worker() -> None:
+            while True:
+                with cv:
+                    while not queue and outstanding[0] > 0:
+                        cv.wait(0.2)
+                    if not queue:
+                        if outstanding[0] == 0:
+                            return
+                        continue
+                    target = queue.popleft()
+                try:
+                    entries = list_dir(target)
+                except ZSpaceError:
+                    with cv:
+                        outstanding[0] -= 1
+                        cv.notify_all()
+                    continue
+                subdirs = []
+                fbytes = fcount = 0
+                for it in entries:
+                    if it.get("is_dir") == "1":
+                        subdirs.append(it.get("path") or "")
+                        continue
+                    fbytes += _as_int(it.get("size"))
+                    fcount += 1
+                with lock:
+                    state["size"] += fbytes
+                    state["files"] += fcount
+                    state["dirs"] += 1
+                if progress is not None:
+                    progress(state["requests"], state["files"], state["size"])
+                with cv:
+                    outstanding[0] += len([s for s in subdirs if s])
+                    for s in subdirs:
+                        if s:
+                            queue.append(s)
+                    outstanding[0] -= 1
+                    cv.notify_all()
+
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
+            list(ex.map(lambda _: worker(), range(max(1, workers))))
+
+        return DirStat(
+            path=path,
+            size=state["size"],
+            files=state["files"],
+            dirs=state["dirs"],
+            state="partial" if state["truncated"] else "done",
+            source="walk",
+            requests=state["requests"],
+        )
+
+    # ── recycle bin ──
+    #
+    # Two independent bins with different endpoints, which is easy to get
+    # wrong: emptying the public one does nothing to files deleted from a
+    # personal space. Both are verified against a live NAS.
+
+    def recycle_list(
+        self,
+        path: str | None = None,
+        start: int = 0,
+        num: int = 200,
+        wait: bool = True,
+        timeout: float = 120.0,
+    ) -> tuple[list[RecycleEntry], int]:
+        """List a recycle bin via ``/v2/file/nb/list``.
+
+        The first call kicks off a server-side scan; until it finishes the
+        response carries ``scan_info.state != "done"`` with an incomplete list.
+        ``wait`` polls until it settles, so callers do not mistake a partial
+        listing for an empty bin.
+
+        Returns ``(entries, total)``.
+        """
+        target = path or self.RECYCLE_MY
+        deadline = time.time() + timeout
+        data: dict[str, Any] = {}
+        while True:
+            data = self._post(
+                "/v2/file/nb/list", {"path": target, "start": start, "num": num}
+            ).get("data") or {}
+            scan = (data.get("scan_info") or {}).get("state")
+            if not wait or scan in (None, "done") or time.time() >= deadline:
+                break
+            time.sleep(2)
+        entries = [
+            RecycleEntry.from_api(i) for i in (data.get("list") or [])
+        ]
+        return entries, _as_int(data.get("total"))
+
+    def recycle_empty(self, public: bool = False) -> dict[str, Any]:
+        """Permanently purge a recycle bin. **Irreversible.**
+
+        ``public=False`` (default) empties the *personal* bin via
+        ``/v2/file/rclean``, which takes no parameters and clears the bin of
+        every pool at once. ``public=True`` empties the shared/family bin via
+        ``/v2/public/recycle/clean`` — a different store; calling it when only
+        personal deletions are pending succeeds with ``total_num: 0`` and frees
+        nothing.
+
+        Returns the task payload (``total_num``, ``succeed_num``, ``fail_num``,
+        ``total_size``) so callers can confirm what was actually purged.
+        """
+        endpoint = "/v2/public/recycle/clean" if public else "/v2/file/rclean"
+        return (self._post(endpoint).get("data") or {}).get("task") or {}
+
+    def recycle_restore(self, paths: list[str]) -> tuple[int, list[str]]:
+        """Restore items from the personal bin. Returns ``(restored, failed)``.
+
+        ``paths`` must be the in-bin paths (``/<pool>/.recycle/my/<name>``) as
+        reported by :meth:`recycle_list`, not the original locations.
+
+        The endpoint takes a singular ``path`` parameter — ``paths[]`` is
+        rejected with N001411 — so multiple items are restored one call each.
+        ``/v2/file/mrestore`` exists for batches but its parameter shape is
+        unverified, so it is deliberately not used here.
+        """
+        restored, failed = 0, []
+        for p in paths:
+            try:
+                self._post("/v2/file/restore", {"path": p})
+                restored += 1
+            except ZSpaceError:
+                failed.append(p)
+        return restored, failed
+
+    def recycle_purge(self, paths: list[str]) -> tuple[int, list[str]]:
+        """Permanently delete *specific* items from the personal bin.
+
+        Returns ``(purged, failed)``. ``paths`` must be in-bin paths
+        (``/<pool>/.recycle/my/<name>``) as reported by :meth:`recycle_list`.
+
+        This is the safe alternative to :meth:`recycle_empty`, which is
+        all-or-nothing across every pool at once — worth knowing when the bin
+        also holds files you did not put there. Mechanically it is a plain
+        ``/v2/file/remove`` aimed at the in-bin path, which is what the web
+        client does for items ticked inside the recycle bin; verified live to
+        drop the target while leaving other items untouched.
+        """
+        purged, failed = 0, []
+        for p in paths:
+            try:
+                self.remove([p])
+                purged += 1
+            except ZSpaceError:
+                failed.append(p)
+        return purged, failed
+
+    def recycle_config(self) -> dict[str, Any]:
+        """Retention policy: ``{my_cycle, public_cycle}``.
+
+        ``-1`` means *never* auto-purge, so deleted data keeps occupying the
+        pool indefinitely until :meth:`recycle_empty` runs.
+        """
+        return self._post("/v2/file/recycle/config/get").get("data") or {}
+
+    def recycle_set_config(
+        self, my_cycle: int | None = None, public_cycle: int | None = None
+    ) -> dict[str, Any]:
+        """Set retention (days; ``-1`` = never). Unset fields keep their value."""
+        current = self.recycle_config()
+        body = {
+            "my_cycle": current.get("my_cycle", -1) if my_cycle is None else my_cycle,
+            "public_cycle": (
+                current.get("public_cycle", -1)
+                if public_cycle is None
+                else public_cycle
+            ),
+        }
+        self._post("/v2/file/recycle/config/save", body)
+        return body
+
+    # ── hardware & health ──
+
+    def disks(self) -> list[DiskInfo]:
+        """Every physical disk in every pool, with health and usage."""
+        out: list[DiskInfo] = []
+        for pool in (self.pool_info().get("data") or {}).get("pool_list") or []:
+            name = pool.get("name", "?")
+            for d in pool.get("disk_list") or []:
+                out.append(DiskInfo.from_api(name, d))
+        return out
+
+    def hardware(self) -> dict[str, int]:
+        """Slot counts by bus, e.g. ``{"sata": 4, "nvme": 4, "esata": 1}``."""
+        return (self._post("/zspool/hardware/info").get("data") or {}).get("slot") or {}
+
+    def free_bays(self) -> dict[str, int]:
+        """Empty slots per bus — how many drives can be added without pulling one."""
+        slots = self.hardware()
+        used: dict[str, int] = {}
+        for pool in (self.pool_info().get("data") or {}).get("pool_list") or []:
+            bus = "nvme" if pool.get("protocol") == "protnvme" else "sata"
+            used[bus] = used.get(bus, 0) + len(pool.get("disk_list") or [])
+        return {bus: max(0, total - used.get(bus, 0)) for bus, total in slots.items()}
+
+    def smart(self, sn: str) -> dict[str, Any]:
+        """Full SMART attribute report for one disk, addressed by serial number.
+
+        ``/zspool/smart/report2`` keys on ``sn`` — passing ``pool_id`` or a
+        ``/dev/*`` name returns N300403 参数错误. Serials come from
+        :meth:`disks`.
+        """
+        return self._post("/zspool/smart/report2", {"sn": sn}).get("data") or {}
+
     def ls(
         self,
         path: str = "/sata11/my/data",
@@ -341,7 +937,21 @@ class ZSpaceClient:
         return self._post_with_array("/v2/file/copy", paths, {"to": to})
 
     def remove(self, paths: list[str] | str) -> dict[str, Any]:
-        """Delete files/directories (moves to trash)."""
+        """Delete files/directories into the **personal** recycle bin.
+
+        This does not free pool space: the data is moved to
+        ``/<pool>/.recycle/my/`` and still counts toward ``usage_size`` until
+        :meth:`recycle_empty` purges it. Verified live — deleting 43.6 GiB left
+        the pool's used/free figures byte-for-byte unchanged.
+
+        Retention is controlled by :meth:`recycle_config`; the factory default
+        ``my_cycle = -1`` means *never* auto-purge, so space stays held
+        indefinitely unless something empties the bin. Deleted items remain
+        recoverable through :meth:`recycle_restore` until then.
+
+        Note the public/family bin is a separate store — emptying it does not
+        touch anything deleted through this method.
+        """
         if isinstance(paths, str):
             paths = [paths]
         return self._post_with_array("/v2/file/remove", paths)
