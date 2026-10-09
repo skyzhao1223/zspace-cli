@@ -51,7 +51,7 @@ JUNK_EXTS = {"tmp", "temp", "bak"}
 SKIP_DIRS = {
     "@eaDir", "#recycle", "#@__recycle_bin", ".Trashes", ".Spotlight-V100",
     ".fseventsd", ".TemporaryItems", "System Volume Information", "$RECYCLE.BIN",
-    ".snapshots", ".zspace_trash", ".trash", ".cache", "node_modules", ".git",
+    ".snapshots", ".zspace_trash", "@Recycle", ".trash", ".cache", "node_modules", ".git",
     "lost+found",
 }
 DUP_MARK_RE = re.compile(r"(?:\s*\(\d+\)|\s*副本\d*|\s+copy(?:\s*\d+)?)$", re.I)

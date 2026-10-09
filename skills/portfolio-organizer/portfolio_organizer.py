@@ -42,7 +42,7 @@ JUNK_EXTS = {"tmp", "temp", "bak", "old", "swp", "crdownload", "part", "td"}
 SKIP_DIRS = {
     "@eaDir", "#recycle", "#@__recycle_bin", ".Trashes", ".Spotlight-V100",
     ".fseventsd", ".TemporaryItems", "System Volume Information", "$RECYCLE.BIN",
-    ".snapshots", ".zspace_trash", ".trash", ".cache", "node_modules", ".git",
+    ".snapshots", ".zspace_trash", "@Recycle", ".trash", ".cache", "node_modules", ".git",
     "lost+found",
 }
 # root 下的非项目功能目录,跳过项目级校验

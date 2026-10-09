@@ -36,7 +36,7 @@ ARCHIVE_EXTS = {
 SKIP_DIRS = {
     "@eaDir", "#recycle", "#@__recycle_bin", ".Trashes", ".Spotlight-V100",
     ".fseventsd", ".TemporaryItems", "System Volume Information", "$RECYCLE.BIN",
-    ".snapshots", ".zspace_trash", ".trash", ".cache", "node_modules", ".git",
+    ".snapshots", ".zspace_trash", "@Recycle", ".trash", ".cache", "node_modules", ".git",
     "lost+found",
 }
 # 备份集识别:日期 / 时间 / 版本号 后缀

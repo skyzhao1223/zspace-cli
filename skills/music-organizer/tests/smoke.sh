@@ -549,4 +549,44 @@ print("  ✓ 校验先于写入(内置五张表分毫未动)+ CUE_IMAGE_EXTS 不
 PYEOF
 rm -rf "$MUCFG_SRC"
 
+echo "=== TEST 8: @Recycle(极空间回收站)不当活库扫描 ==="
+# 家族审计 F4:此前 @Recycle 只在 photo-organizer 的 SKIP_DIRS 里,
+# music-organizer 会把回收站里的目录注册成「歌手」、把已删除的歌当库内曲目。
+MU_SKILL_DIR="$SKILL_DIR" "$PY" - <<'PYEOF'
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+skill = os.environ["MU_SKILL_DIR"]
+script = f"{skill}/music_organizer.py"
+
+root = tempfile.mkdtemp(prefix="mu-recycle.")
+try:
+    os.makedirs(os.path.join(root, "周杰伦"))
+    os.makedirs(os.path.join(root, "@Recycle", "回收歌手"))
+    with open(os.path.join(root, "周杰伦", "晴天.mp3"), "wb") as fh:
+        fh.write(b"M" * 3000)
+    with open(os.path.join(root, "@Recycle", "回收歌手", "被删的歌.mp3"), "wb") as fh:
+        fh.write(b"M" * 2000)
+    r = subprocess.run([sys.executable, script, "scan", "--root", root, "--json"],
+                       capture_output=True, encoding="utf-8", errors="replace")
+    assert r.returncode == 0, (r.returncode, r.stderr[-400:])
+    d = json.loads(r.stdout)
+    s = d["stats"]
+    blob = json.dumps(d, ensure_ascii=False)
+    # 回收站在整份报告里必须完全不可见
+    assert "@Recycle" not in blob, blob[:300]
+    assert "回收歌手" not in blob, blob[:300]
+    assert "被删的歌" not in blob, blob[:300]
+    assert s["artists"] == 1, s              # 只有 周杰伦
+    assert s["audio_files"] == 1, s
+    assert s["audio_size_bytes"] == 3000, s  # 被删的 2000B 不计入
+    print("  ✓ @Recycle 被跳过:回收站目录不再是「歌手」,已删除的歌不再入库统计")
+finally:
+    shutil.rmtree(root, ignore_errors=True)
+PYEOF
+
 echo "🎉 所有 smoke test 通过"
