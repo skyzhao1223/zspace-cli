@@ -19,13 +19,16 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import NoReturn
 
 MAX_DEPTH = 12
 HEAD_SIZE = 64 * 1024        # 头部指纹读 64KB
@@ -37,8 +40,115 @@ SKIP_DIRS = {
     ".trash", ".cache", "node_modules", ".git", ".svn", ".idea", ".vscode",
     "__pycache__", ".venv", "venv", "lost+found",
 }
-# 这些目录里的副本通常是"正主",重复时优先保留(降权删除优先级)
-PREFER_KEEP_HINTS = ("成品", "源文件", "原始", "master", "original", "import", "相册")
+# 这些目录里的副本通常是"正主",重复时优先保留(降权删除优先级)。
+# 用 list 而不是 tuple:config.json 的 prefer_keep_hints 要**追加**到这里
+# (与 #47 对内置 *_EXTS 的处置一致 —— 内置条目一条都不删),原地 extend
+# 比重新绑定全局名少一处 global 声明,keep_rank() 一行都不用改。
+PREFER_KEEP_HINTS = ["成品", "源文件", "原始", "master", "original", "import", "相册"]
+
+# ── 可选覆盖层:config.json(与本脚本同目录)────────────────────────────
+# 「装 skill」是逐目录 copytree(cli.py 的 zs skill,加 --only 也一样),共享模块
+# 装不进用户目录,所以这一段在每个 scanner 里逐字重复 —— 要改就全局搜索替换,
+# 别只改一处。per-skill 的只有紧跟其后的 CONFIG_KEYS 和它点到的那张表。
+CONFIG_NAME = "config.json"
+CONFIG_KEYS = ("skip_dirs", "prefer_keep_hints")
+CONFIG_SKIP: list[str] = []           # skip_dirs 追加到这里(扩展内置 SKIP_DIRS)
+CONFIG_INFO: dict[str, object] = {}   # 非空 = 真加载了配置,回写进 stats 供核对
+
+
+def _cfg_die(path: Path, msg: str) -> NoReturn:
+    """配置有问题就**立刻退出**,并指名是哪个文件、哪个键。
+
+    静默忽略一份用户以为生效了的配置是最坏的失败方式:扫描会继续按内置规则出
+    结果,而且不给任何解释。
+    """
+    raise SystemExit(f"❌ 配置文件 {path} 无效:{msg}")
+
+
+def _cfg_match(rel_parts: list[str], patterns: list[str]) -> bool:
+    """目录是否命中 skip_dirs 模式。锚定在被扫描的根目录,大小写不敏感。
+
+    模式匹配「整段相对路径」**或**「任一级目录名」即命中,fnmatch 的 `*` 会跨过
+    `/`。所以 `临时/*` 命中 <root>/临时/2024,但不命中 <root>/x/临时;不含
+    `/` 的 `临时` 命中任意深度的同名目录。命中一个目录即命中它的整棵子树。
+    绝对路径永远匹配不上,load_config 会直接报错而不是让你以为它生效了。
+    """
+    if not patterns or not rel_parts:
+        return False
+    joined = "/".join(rel_parts).lower()
+    for pat in patterns:
+        low = pat.lower()
+        if fnmatch.fnmatch(joined, low):
+            return True
+        if any(fnmatch.fnmatch(p.lower(), low) for p in rel_parts):
+            return True
+    return False
+
+
+def load_config(script_dir: Path | None = None) -> None:
+    """读同目录的 config.json,把两个键**并入**内置默认值(不替换)。
+
+    文件不存在 → 立刻返回:没有 config.json 时本 scanner 的输出与引入这段代码
+    之前**逐字节一致**。合并语义、模式锚定规则、报错行为逐条写在 SKILL.md 的
+    「配置覆盖(config.json)」一节。校验全部跑完才动手改内置集合 —— 半途退出
+    会留下一张只改了一半的表,那比直接报错难查得多。
+    """
+    path = (script_dir or Path(__file__).resolve().parent) / CONFIG_NAME
+    if not path.is_file():
+        return
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as e:
+        _cfg_die(path, f"读不了这个文件:{e}")
+    except ValueError as e:
+        _cfg_die(path, f"不是合法 JSON(空文件也算):{e}")
+    if not isinstance(raw, dict):
+        _cfg_die(path, f"顶层必须是 JSON 对象,实际是 {type(raw).__name__}")
+    unknown = sorted(set(raw) - set(CONFIG_KEYS))
+    if unknown:
+        _cfg_die(path, f"未知键 {', '.join(unknown)};可用键只有 "
+                 f"{', '.join(CONFIG_KEYS)}。宁可报错也不警告后忽略 —— 键名拼错"
+                 "一个字母就会让整份配置静默失效,而用户看不出任何区别")
+    skip = raw.get("skip_dirs", [])
+    if not isinstance(skip, list):
+        _cfg_die(path, f"skip_dirs 必须是字符串数组,实际是 "
+                 f"{type(skip).__name__}(只有一条也要写成 [\"临时\"])")
+    for i, item in enumerate(skip):
+        if not isinstance(item, str):
+            _cfg_die(path, f"skip_dirs[{i}] 必须是字符串,实际是 "
+                     f"{type(item).__name__}")
+        pat = item.strip()
+        if not pat:
+            _cfg_die(path, f"skip_dirs[{i}] 是空字符串")
+        if pat.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:[\\/]", pat):
+            _cfg_die(path, f"skip_dirs[{i}] 写成了绝对路径 {item!r};"
+                     "模式锚定在被扫描的根目录,只能写相对路径(如 临时/*)")
+    hints = raw.get("prefer_keep_hints", [])
+    if not isinstance(hints, list):
+        _cfg_die(path, f"prefer_keep_hints 必须是字符串数组,实际是 "
+                 f"{type(hints).__name__}(只有一条也要写成 [\"终稿\"])")
+    for i, item in enumerate(hints):
+        if not isinstance(item, str):
+            _cfg_die(path, f"prefer_keep_hints[{i}] 必须是字符串,实际是 "
+                     f"{type(item).__name__}")
+        if not item.strip():
+            _cfg_die(path, f"prefer_keep_hints[{i}] 是空字符串")
+    # 校验全过才动手。prefer_keep_hints 是**追加**:内置那 7 条一条都不删,与
+    # #47 对内置 *_EXTS 的处置一致。归一化成小写是因为 keep_rank 比的就是
+    # item["path"].lower() —— 内置提示词本来就全是小写,所以这不改变内置语义。
+    # 仍然按内置的做法做**子串**匹配,没有偷偷升级成 glob(那会连内置提示词的
+    # 语义一起改掉);去重只是让汇报里不出现重复条目。
+    CONFIG_SKIP.extend(item.strip() for item in skip)
+    added = [h.strip().lower() for h in hints]
+    PREFER_KEEP_HINTS.extend(h for h in added if h not in PREFER_KEEP_HINTS)
+    CONFIG_INFO.update({
+        "path": str(path),
+        "skip_dirs": list(CONFIG_SKIP),
+        "prefer_keep_hints": added,
+        "prefer_keep_hints_effective": list(PREFER_KEEP_HINTS),
+    })
+    print(f"ℹ️ 已加载覆盖配置 {path}(skip_dirs {len(skip)} 条,"
+          f"prefer_keep_hints {len(hints)} 条)", file=sys.stderr)
 
 
 def head_hash(path: str) -> str | None:
@@ -97,6 +207,7 @@ class Scanner:
             "wasted_bytes": 0, "elapsed_sec": 0.0, "truncated": False,
         }
         self._size_map: dict[int, list[dict]] = {}
+        self._cfg_skipped_dirs = 0   # 因 config skip_dirs 未纳入的目录数
 
     # -- 遍历:按 size 分组 -------------------------------------------
 
@@ -119,7 +230,11 @@ class Scanner:
             if entry.is_dir():
                 if name in SKIP_DIRS or name.startswith("."):
                     continue
-                self._walk(entry.path, rel_root, rel_parts + [name])
+                child_rel = rel_parts + [name]
+                if _cfg_match(child_rel, CONFIG_SKIP):
+                    self._cfg_skipped_dirs += 1
+                    continue
+                self._walk(entry.path, rel_root, child_rel)
             elif entry.is_file():
                 if name.startswith("._") or name == ".DS_Store":
                     continue
@@ -133,9 +248,15 @@ class Scanner:
                     continue
                 self.stats["files_scanned"] += 1
                 try:
-                    rel = entry.path[len(str(rel_root)) + 1:]
+                    # 统一成正斜杠:其余 8 个 scanner 都用 "/".join(rel_parts),只有这里
+                    # 是字符串切片,于是 Windows 上会输出 OLD\G.bin。后果不止是汇报里
+                    # 混着两种分隔符 —— keep_rank() 的深度这一级是
+                    # item["path"].count("/"),在反斜杠路径上恒为 0,「浅路径优先」
+                    # 在整个 Windows 平台上都是失效的。POSIX 上 os.sep 本就是 "/",
+                    # 这个 replace 是空操作,输出逐字节不变。
+                    rel = entry.path[len(str(rel_root)) + 1:].replace(os.sep, "/")
                 except Exception:
-                    rel = entry.path
+                    rel = entry.path.replace(os.sep, "/")
                 self._size_map.setdefault(st.st_size, []).append({
                     "path": rel,
                     "abs": entry.path,
@@ -214,6 +335,11 @@ class Scanner:
         groups = self._dedup()
         groups.sort(key=lambda g: -g["wasted_bytes"])
         self.stats["elapsed_sec"] = round(time.time() - t0, 2)
+        if CONFIG_INFO:
+            # 只在真加载了 config.json 时才多这一个键(与 photo-organizer 的
+            # --exif 同一个手法),没有配置文件时 JSON 与引入覆盖层之前逐字节一致
+            self.stats["config"] = {**CONFIG_INFO,
+                                    "skipped_dirs": self._cfg_skipped_dirs}
         print(
             f'扫描完成: {self.stats["files_scanned"]} 文件参与比对, '
             f'{self.stats["duplicate_groups"]} 组重复\n', file=sys.stderr,
@@ -238,6 +364,34 @@ def _human(n: float) -> str:
     return f"{n:.1f} TB"
 
 
+def _print_config(s: dict) -> None:
+    """把生效的覆盖配置打进人类报告 —— 「哪份配置在生效」必须一眼可查。
+
+    三个 scanner 里 dedup-finder 的输出是删除计划,而 prefer_keep_hints 能反转
+    「重复组里保留哪个」,所以生效的提示词尤其不能只躺在 JSON 里。没有加载配置
+    时一个字都不打印:人类报告与引入覆盖层之前逐字节一致。
+    """
+    cfg: dict = s.get("config") or {}
+    if not cfg:
+        return
+    print(f"\n⚙ 已加载覆盖配置 {cfg['path']}")
+    for key in CONFIG_KEYS:
+        val = cfg.get(key)
+        if not val:
+            continue
+        if isinstance(val, list):
+            shown = ", ".join(val)
+        elif isinstance(val, dict):
+            shown = ", ".join(f"{k}→{v}" for k, v in val.items())
+        else:
+            shown = str(val)
+        print(f"  {key}: {shown}")
+    if cfg.get("prefer_keep_hints_effective"):
+        print("  保留提示词生效全集(内置 + 本次追加,决定重复组里先保留哪个):")
+        print(f"    {', '.join(cfg['prefer_keep_hints_effective'])}")
+    print(f"  因 skip_dirs 未纳入的目录: {cfg.get('skipped_dirs', 0)} 个")
+
+
 def _print_human(result: dict, top: int) -> None:
     s = result["stats"]
     print("=" * 70)
@@ -251,6 +405,7 @@ def _print_human(result: dict, top: int) -> None:
           f"| 可回收 {_human(s['wasted_bytes'])} | 耗时 {s['elapsed_sec']}s")
     if s.get("truncated"):
         print("(已达 --max-files 上限,结果不完整)")
+    _print_config(s)
 
     issues = result["issues"]
     if not issues:
@@ -314,6 +469,10 @@ def main() -> None:
     if args.cmd != "scan":
         print(f"未知命令: {args.cmd}", file=sys.stderr)
         raise SystemExit(1)
+
+    # 可选覆盖层:同目录 config.json。没有这个文件时下面这行什么都不做,
+    # 内置的 SKIP_DIRS 与 PREFER_KEEP_HINTS 一个都不变,输出与引入覆盖层之前逐字节一致。
+    load_config()
 
     scanner = Scanner(args.root, args.max_depth, args.min_size * 1024, args.max_files)
     result = scanner.scan()
