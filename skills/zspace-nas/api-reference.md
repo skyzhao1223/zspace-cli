@@ -465,6 +465,8 @@ NAS 自带一个官方百度网盘模块，桌面客户端代理把它挂在 `/z
 
 **实测**返回 `data.list[]` + `data.task_count` + `data.unfinished_task` + `data.current_page`/`page`。每个任务字段（实测）：`task_id`, `name`, `mode`, `task_type`, `down_state`, `scan_state`, `download_size`, `total_size`, `rate`, `retry_times`, `download_success`, `download_fail`, `file_total`, `fail_num`, `fail_reason`, `advice`, `baidu_limit`, `illegal_content`, `space_fulle`, `extend_info`, `created_time`, `save_path`, `remote_path`。
 
+> ⚠️ `download_size` 是**本次会话**的下载量，不等于磁盘上文件的实际大小。断点续传后两者会差很多——实测某任务 `download_size` 仅 111 MiB，而 `save_path/name` 对应的盘上文件已有 1690 MiB。要判断真实进度，去 stat 那个文件，别信这个字段。
+
 `down_state` 语义（**源码推断**，取自任务中心 UI 模块 `39137` 的渲染分支；与实测到的取值一致）：
 
 | `down_state` | 含义 |
