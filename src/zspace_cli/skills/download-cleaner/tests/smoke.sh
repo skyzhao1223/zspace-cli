@@ -111,6 +111,7 @@ r = subprocess.run(
     [sys.executable, f"{skill}/download_cleaner.py", "scan",
      "--root", root, "--stale-days", "365", "--output", out],
     capture_output=True, text=True,
+    encoding="utf-8", errors="replace",
 )
 assert r.returncode == 0, r.stderr
 data = json.loads(open(out, encoding="utf-8").read())
