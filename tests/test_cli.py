@@ -543,3 +543,227 @@ def test_cli_info_json():
     assert r.exit_code == 0
     data = _json.loads(out)
     assert data["path"] == "/d/a.txt"
+
+
+# ── zs baidu（/znetdisk/*）──
+
+
+def _baidu_user_info(iot_vip: int = 0, vip: int = 0) -> dict:
+    return {
+        "user_info": {
+            "netdisk_name": "测试账号", "baidu_name": "bd", "uk": 1,
+            "vip_type": vip, "iot_vip_type": iot_vip,
+        },
+        "quota": {"used": 5 * 1024**3, "total": 10 * 1024**3},
+        "iot_vip_cashier": "https://example.invalid/buy",
+    }
+
+
+def test_cli_baidu_check_linked():
+    r, out, c = _run_cmd("baidu", "check", client_overrides={
+        "baidu_check.return_value": {"is_login": True, "url": "https://x"},
+        "baidu_userinfo.return_value": _baidu_user_info(),
+    })
+    assert r.exit_code == 0
+    assert "已绑定" in out
+    assert "测试账号" in out
+    assert "百度NAS会员: 否" in out
+    assert "code 15" in out          # 非会员提示门槛
+    assert "50%" in out              # 5 GiB / 10 GiB
+    c.baidu_check.assert_called_once_with()
+    c.baidu_userinfo.assert_called_once_with()
+
+
+def test_cli_baidu_check_iot_vip_active():
+    r, out, _ = _run_cmd("baidu", "check", client_overrides={
+        "baidu_check.return_value": {"is_login": True},
+        "baidu_userinfo.return_value": _baidu_user_info(iot_vip=1, vip=2),
+    })
+    assert r.exit_code == 0
+    assert "百度NAS会员: 是" in out
+    assert "SVIP: 是" in out
+    assert "code 15" not in out      # 会员不再提示门槛
+
+
+def test_cli_baidu_check_not_linked():
+    r, out, c = _run_cmd("baidu", "check", client_overrides={
+        "baidu_check.return_value": {"is_login": False, "url": "https://x"},
+    })
+    assert r.exit_code == 1
+    assert "未绑定" in out
+    assert "https://x" not in out    # 不把授权 URL 打到终端/日志
+    c.baidu_userinfo.assert_not_called()
+
+
+def test_cli_baidu_check_not_linked_json():
+    r, out, _ = _run_cmd("baidu", "check", "--json", client_overrides={
+        "baidu_check.return_value": {"is_login": False},
+    })
+    assert r.exit_code == 1
+    assert '"linked": false' in out
+
+
+def test_cli_baidu_check_userinfo_error_degrades():
+    from zspace_cli.client import ZSpaceError
+
+    r, out, _ = _run_cmd("baidu", "check", client_overrides={
+        "baidu_check.return_value": {"is_login": True},
+        "baidu_userinfo.side_effect": ZSpaceError("500", "userinfo failed"),
+    })
+    assert r.exit_code == 0
+    assert "已绑定" in out
+
+
+def test_cli_baidu_check_api_error():
+    from zspace_cli.client import ZSpaceError
+
+    r, out, _ = _run_cmd("baidu", "check", client_overrides={
+        "baidu_check.side_effect": ZSpaceError("500", "check failed"),
+    })
+    assert r.exit_code == 1
+    assert "check failed" in out
+
+
+def test_cli_baidu_ls():
+    entries = [
+        {"fs_id": 1, "server_filename": "电影", "path": "/电影", "size": 0, "isdir": 1},
+        {"fs_id": 2, "server_filename": "a.mkv", "path": "/a.mkv", "size": 2048, "isdir": 0},
+    ]
+    r, out, c = _run_cmd("baidu", "ls", "/x",
+                         client_overrides={"baidu_ls.return_value": entries})
+    assert r.exit_code == 0
+    assert "电影/" in out
+    assert "a.mkv" in out
+    assert "2.0 KB" in out
+    assert "共 2 项" in out
+    c.baidu_ls.assert_called_once_with("/x")
+
+
+def test_cli_baidu_ls_json():
+    import json as _json
+
+    entries = [{"fs_id": 7, "server_filename": "b.mp4", "path": "/b.mp4",
+                "size": 3, "isdir": 0}]
+    r, out, _ = _run_cmd("baidu", "ls", "--json",
+                         client_overrides={"baidu_ls.return_value": entries})
+    assert r.exit_code == 0
+    data = _json.loads(out)
+    assert data[0]["fs_id"] == "7"
+    assert data[0]["is_dir"] is False
+    assert data[0]["size"] == 3
+
+
+def test_cli_baidu_ls_empty():
+    r, out, _ = _run_cmd("baidu", "ls", client_overrides={"baidu_ls.return_value": []})
+    assert r.exit_code == 0
+    assert "空目录" in out
+
+
+def test_cli_baidu_ls_error():
+    from zspace_cli.client import ZSpaceError
+
+    r, out, _ = _run_cmd("baidu", "ls", client_overrides={
+        "baidu_ls.side_effect": ZSpaceError("15", "需要NAS会员权限"),
+    })
+    assert r.exit_code == 1
+    assert "需要NAS会员权限" in out
+
+
+def test_cli_baidu_tasks_labels():
+    tasks = [
+        {"task_id": "t1", "name": "downloading.mkv", "down_state": 1, "rate": 2048,
+         "download_size": 1024, "total_size": 4096, "retry_times": 0},
+        {"task_id": "t2", "name": "queued.mkv", "down_state": 6},
+        {"task_id": "t3", "name": "done.mkv", "down_state": 4,
+         "download_size": 10, "total_size": 10},
+        {"task_id": "t4", "name": "broken.mkv", "down_state": 4, "fail_num": 2},
+        {"task_id": "t5", "name": "retrying.mkv", "down_state": 1, "retry_times": 3},
+        {"task_id": "t6", "name": "weird.mkv", "down_state": 99},
+    ]
+    r, out, c = _run_cmd("baidu", "tasks",
+                         client_overrides={"baidu_tasks.return_value": tasks})
+    assert r.exit_code == 0
+    for label in ["下载中", "排队中", "已完成", "失败", "重试中", "未知(99)"]:
+        assert label in out
+    assert "25%" in out              # 1024/4096
+    assert "2.0 KB/s" in out         # down_state==1 且 rate>0 才显示速度
+    c.baidu_tasks.assert_called_once_with(state="")
+
+
+def test_cli_baidu_tasks_state_option():
+    r, out, c = _run_cmd("baidu", "tasks", "--state", "fail",
+                         client_overrides={"baidu_tasks.return_value": []})
+    assert r.exit_code == 0
+    assert "没有任务" in out
+    c.baidu_tasks.assert_called_once_with(state="fail")
+
+
+def test_cli_baidu_tasks_json_raw():
+    import json as _json
+
+    tasks = [{"task_id": "t1", "down_state": 6}]
+    r, out, _ = _run_cmd("baidu", "tasks", "--json",
+                         client_overrides={"baidu_tasks.return_value": tasks})
+    assert r.exit_code == 0
+    assert _json.loads(out) == tasks
+
+
+def test_cli_baidu_fails():
+    fails = [{"file_name": "x.mkv", "fail_reason": "校验失败",
+              "baidu_fail_code": 31066, "advice": "重试"}]
+    r, out, c = _run_cmd("baidu", "fails",
+                         client_overrides={"baidu_fail_list.return_value": fails})
+    assert r.exit_code == 0
+    assert "x.mkv" in out
+    assert "校验失败" in out
+    assert "31066" in out
+    c.baidu_fail_list.assert_called_once_with(task_id=None)
+
+
+def test_cli_baidu_fails_task_id_option():
+    r, out, c = _run_cmd("baidu", "fails", "--task-id", "t9",
+                         client_overrides={"baidu_fail_list.return_value": []})
+    assert r.exit_code == 0
+    assert "没有失败文件" in out
+    c.baidu_fail_list.assert_called_once_with(task_id="t9")
+
+
+def test_cli_baidu_retry_all_force():
+    r, out, c = _run_cmd("baidu", "retry", "--force")
+    assert r.exit_code == 0
+    c.baidu_task_action.assert_called_once_with("resume_fail_all", task_id=None)
+    assert "resume_fail_all" in out
+
+
+def test_cli_baidu_retry_single_force():
+    r, out, c = _run_cmd("baidu", "retry", "t42", "--force")
+    assert r.exit_code == 0
+    c.baidu_task_action.assert_called_once_with("resume", task_id="t42")
+
+
+def test_cli_baidu_retry_without_force_aborts_on_empty_stdin():
+    r, _, c = _run_cmd("baidu", "retry")
+    assert r.exit_code == 1
+    c.baidu_task_action.assert_not_called()
+
+
+def test_cli_baidu_retry_error():
+    from zspace_cli.client import ZSpaceError
+
+    r, out, _ = _run_cmd("baidu", "retry", "--force", client_overrides={
+        "baidu_task_action.side_effect": ZSpaceError("15", "需要NAS会员权限"),
+    })
+    assert r.exit_code == 1
+    assert "需要NAS会员权限" in out
+
+
+def test_cli_baidu_subapp_registered():
+    # `zs baidu --help` lists every subcommand. Use --help (exit 0 on both
+    # click 8.1/py3.9 and click 8.5/py3.12) rather than the bare `zs baidu`,
+    # whose no_args_is_help exit code differs across click versions (0 vs 2).
+    # Help goes to click's stdout, not the rich console buffer _run_cmd
+    # captures, so read it off the result.
+    r, _, _ = _run_cmd("baidu", "--help")
+    assert r.exit_code == 0
+    for sub in ["check", "ls", "tasks", "fails", "retry"]:
+        assert sub in r.output

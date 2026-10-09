@@ -464,6 +464,236 @@ def down(
                 raise typer.Exit(1)
 
 
+# ── 百度网盘（NAS /znetdisk/* 集成）──
+#
+# 绑定流程是浏览器 OAuth，CLI 不代办；这里只暴露只读查询 + 任务重试。
+# 分享转存/离线下载被服务端「百度NAS会员」门槛挡住（非会员 code 15，
+# 且非会员 file/download 实测 0 B/s 卡死），故不提供对应命令。
+
+baidu_app = typer.Typer(
+    help="百度网盘（经 NAS /znetdisk/* 集成）",
+    no_args_is_help=True,
+    rich_markup_mode="rich",
+)
+app.add_typer(baidu_app, name="baidu")
+
+# down_state 语义取自任务中心 UI 的渲染分支（见 api-reference.md）。
+_BAIDU_DOWN_STATES = {
+    1: "下载中", 2: "已暂停", 4: "已完成", 6: "排队中",
+    9: "建备份目录", 10: "算文件信息",
+}
+
+
+def _baidu_num(v: Any) -> int:
+    """int() that tolerates None/str/missing — API 数值字段类型不保证。"""
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _baidu_task_failed(t: dict) -> bool:
+    """Web UI 的失败判定（taskFailed）：失败不是独立 down_state。"""
+    return bool(
+        t.get("fail_reason")
+        or (_baidu_num(t.get("fail_num")) > 0 and _baidu_num(t.get("down_state")) == 4)
+        or _baidu_num(t.get("baidu_limit")) == 1
+        or _baidu_num(t.get("illegal_content")) > 0
+        or _baidu_num(t.get("space_fulle")) == 1
+    )
+
+
+def _baidu_state_label(t: dict) -> str:
+    if _baidu_task_failed(t):
+        return "失败"
+    st = _baidu_num(t.get("down_state"))
+    if st == 1 and _baidu_num(t.get("retry_times")) > 0:
+        return "重试中"
+    return _BAIDU_DOWN_STATES.get(st, f"未知({st})")
+
+
+@baidu_app.command("check")
+def baidu_check(
+    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
+):
+    """检查百度网盘绑定状态、会员与容量"""
+    with _client() as c:
+        try:
+            chk = c.baidu_check()
+        except ZSpaceError as e:
+            _print_error(e)
+            raise typer.Exit(1)
+        linked = bool(chk.get("is_login"))
+        info: dict = {}
+        if linked:
+            try:
+                info = c.baidu_userinfo()
+            except ZSpaceError:
+                info = {}  # 绑定结论优先，配额失败降级（同 zs check 对存储池）
+        user = info.get("user_info") or {}
+        quota = info.get("quota") or {}
+        if json_output:
+            _emit_json({"linked": linked, "user_info": user, "quota": quota})
+            if not linked:
+                raise typer.Exit(1)
+            return
+        if not linked:
+            console.print("[red]![/red] 未绑定百度网盘账号")
+            console.print(
+                "  [dim]请在极空间客户端/网页端打开「百度网盘备份」完成授权"
+                "（浏览器 OAuth 流程，CLI 不代办）[/dim]"
+            )
+            raise typer.Exit(1)
+        name = user.get("netdisk_name") or user.get("baidu_name") or ""
+        console.print(f"[green]OK[/green] 已绑定百度网盘{('：' + str(name)) if name else ''}")
+        svip = "是" if _baidu_num(user.get("vip_type")) == 2 else "否"
+        iot = "是" if _baidu_num(user.get("iot_vip_type")) == 1 else "否"
+        console.print(f"  百度网盘 SVIP: {svip} (vip_type={user.get('vip_type', '?')})")
+        console.print(f"  百度NAS会员: {iot} (iot_vip_type={user.get('iot_vip_type', '?')})")
+        if iot == "否":
+            console.print("  [dim]分享转存/直下需百度NAS会员（非会员服务端返回 code 15）[/dim]")
+        used, total = _baidu_num(quota.get("used")), _baidu_num(quota.get("total"))
+        if total > 0:
+            console.print(
+                f"  容量: {_size_str(used)} / {_size_str(total)} ({used * 100 // total}%)"
+            )
+
+
+@baidu_app.command("ls")
+def baidu_ls(
+    path: str = typer.Argument("/", help="百度网盘内目录"),
+    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
+):
+    """列出绑定的百度网盘目录（经 NAS）"""
+    with _client() as c:
+        try:
+            entries = c.baidu_ls(path)
+        except ZSpaceError as e:
+            _print_error(e)
+            raise typer.Exit(1)
+        if json_output:
+            _emit_json([{
+                "name": e.get("server_filename", ""),
+                "path": e.get("path", ""),
+                "is_dir": _baidu_num(e.get("isdir")) == 1,
+                "size": _baidu_num(e.get("size")),
+                "fs_id": str(e.get("fs_id", "")),
+            } for e in entries])
+            return
+        if not entries:
+            console.print("[yellow]（空目录）[/yellow]")
+            return
+        for e in entries:
+            name = str(e.get("server_filename", ""))
+            if _baidu_num(e.get("isdir")) == 1:
+                console.print(f"  [bold blue]{name}/[/bold blue]")
+            else:
+                console.print(f"  {name}  [dim]{_size_str(_baidu_num(e.get('size')))}[/dim]")
+        console.print(f"\n[dim]共 {len(entries)} 项[/dim]")
+
+
+@baidu_app.command("tasks")
+def baidu_tasks(
+    state: str = typer.Option(
+        "", "--state", help="过滤: 空=全部 / running / done / pause / fail"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
+):
+    """列出百度网盘传输任务（NAS 侧任务中心）"""
+    with _client() as c:
+        try:
+            tasks = c.baidu_tasks(state=state)
+        except ZSpaceError as e:
+            _print_error(e)
+            raise typer.Exit(1)
+        if json_output:
+            _emit_json(tasks)
+            return
+        if not tasks:
+            console.print("[yellow]没有任务[/yellow]")
+            return
+        table = Table(box=box.SIMPLE, show_header=True, header_style="bold cyan")
+        table.add_column("状态", width=10)
+        table.add_column("名称")
+        table.add_column("进度", justify="right", width=20)
+        table.add_column("速度", justify="right", width=10)
+        table.add_column("任务ID", style="dim")
+        color = {"失败": "red", "已完成": "green", "已暂停": "yellow", "排队中": "dim"}
+        for t in tasks:
+            label = _baidu_state_label(t)
+            style = color.get(label, "blue")
+            done, total = _baidu_num(t.get("download_size")), _baidu_num(t.get("total_size"))
+            if total > 0:
+                progress = f"{_size_str(done)}/{_size_str(total)} {done * 100 // total}%"
+            elif _baidu_num(t.get("down_state")) == 4:
+                progress = "100%"
+            else:
+                progress = "—"
+            rate = _baidu_num(t.get("rate"))
+            speed = (
+                f"{_size_str(rate)}/s"
+                if rate > 0 and _baidu_num(t.get("down_state")) == 1 else "—"
+            )
+            table.add_row(
+                f"[{style}]{label}[/{style}]", str(t.get("name", "")),
+                progress, speed, str(t.get("task_id", "")),
+            )
+        console.print(table)
+        console.print(f"\n[dim]共 {len(tasks)} 个任务[/dim]")
+
+
+@baidu_app.command("fails")
+def baidu_fails(
+    task_id: Optional[str] = typer.Option(None, "--task-id", help="只看指定任务的失败文件"),
+    json_output: bool = typer.Option(False, "--json", help="JSON 输出"),
+):
+    """列出百度网盘任务的失败文件与原因"""
+    with _client() as c:
+        try:
+            fails = c.baidu_fail_list(task_id=task_id)
+        except ZSpaceError as e:
+            _print_error(e)
+            raise typer.Exit(1)
+        if json_output:
+            _emit_json(fails)
+            return
+        if not fails:
+            console.print("[green]没有失败文件[/green]")
+            return
+        table = Table(box=box.SIMPLE, show_header=True, header_style="bold cyan")
+        table.add_column("文件")
+        table.add_column("原因")
+        table.add_column("百度码", justify="right", width=8)
+        table.add_column("建议")
+        for f in fails:
+            table.add_row(
+                str(f.get("file_name", "")), str(f.get("fail_reason", "")),
+                str(f.get("baidu_fail_code", "")), str(f.get("advice", "")),
+            )
+        console.print(table)
+        console.print(f"\n[dim]共 {len(fails)} 个失败文件（zs baidu retry 可重试）[/dim]")
+
+
+@baidu_app.command("retry")
+def baidu_retry(
+    task_id: Optional[str] = typer.Argument(None, help="任务 ID；缺省=重试全部失败文件"),
+    force: bool = typer.Option(False, "--force", "-f", help="跳过确认"),
+):
+    """恢复暂停/失败的百度网盘任务（会改变 NAS 任务状态）"""
+    with _client() as c:
+        method = "resume" if task_id else "resume_fail_all"
+        what = f"任务 {task_id}" if task_id else "全部失败文件"
+        if not force:
+            if not typer.confirm(f"确定要重试{what}（{method}）？"):
+                raise typer.Abort()
+        try:
+            c.baidu_task_action(method, task_id=task_id)
+            console.print(f"[green]OK[/green] 已提交 [bold]{method}[/bold]：{what}")
+        except ZSpaceError as e:
+            _print_error(e)
+            raise typer.Exit(1)
+
+
 @app.command()
 def skill(
     target_dir: Optional[Path] = typer.Argument(

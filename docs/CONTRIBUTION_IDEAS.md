@@ -54,28 +54,60 @@ All CLI messages are Chinese (`OK 已上传到 …`). Add an English mode via
 `ZS_LANG=en` / `--lang`, keeping zh as default. Typer help strings too.
 **Why:** the README is English-first; international users hit a wall at runtime.
 
-## The `/znetdisk/*` Baidu NetDisk integration (🔴, high impact)
+## The `/znetdisk/*` Baidu NetDisk integration (🟡, read side shipped)
 
 The NAS ships an official Baidu NetDisk (百度网盘) module that the desktop proxy
-exposes under `/znetdisk/*`. Observed working (via the local proxy with the
-standard token/nasid/device_id auth):
+exposes under `/znetdisk/*` with the standard token/nasid/device_id auth and the
+same `{code:"200", msg, data}` envelope as the file API.
 
-| Endpoint | Notes |
-|----------|-------|
-| `auth/check`, `auth/userinfo`, `auth/token`, `auth/logout` | `userinfo` returns baidu uk, vip_type, **iot_vip_type** (百度NAS会员), quota |
-| `share/verify` | `{short_url, pwd}` → `data.spwd` (server-side share verification) |
-| `share/filelist` | `{short_url, spwd, page, limit, path}` → shared entries incl. `fsid`, `md5`, `size` |
-| `share/transfer`, `share/transfer_result` | save share → own pan; **gated**: non-NAS-VIP gets `code 15 需要NAS会员权限` |
-| `file/download` | `{file_ids, save_path}` — create NAS-side download task from own pan (accepted for non-VIP, but observed **0 B/s stall** — Baidu throttles non-VIP openapi hard; verify before building UX on it) |
-| `task/list`, `task/action` | task states: 1=downloading 2=paused 4=done 5=queued 6=retrying; actions: `resume/pause/clean/pause_all/resume_all/clean_all/clean_all_done/resume_fail_all/clean_fail_all` |
-| `fail/list`, `autobackup/*`, `sync/*`, `membership/active`, `order/*` | unexplored |
+> ✅ **Shipped** (this repo, `zs baidu` + `client.baidu_*` + docs): the
+> **read-only** side — `auth/check`, `auth/userinfo`, `file/list`, `task/list`,
+> `fail/list` were probed against a real NAS and wrapped; `share/verify`,
+> `share/filelist`, `task/action` are wrapped from source (not exercised live).
+> Full field lists, the `down_state`/`taskFailed` semantics and the
+> measured-vs-inferred split now live in
+> [`skills/zspace-nas/api-reference.md`](../skills/zspace-nas/api-reference.md)
+> → 「百度网盘集成 API」, with the UX/gating story in
+> [`docs/integrations.md`](integrations.md) → Baidu NetDisk.
 
-Deliverables could be: `zs baidu check|ls|tasks|retry` CLI + SDK methods + a
-`zspace-nas` skill section documenting the above. Even **docs-only** (adding
-this table to `skills/zspace-nas/api-reference.md` with caveats) is a valuable
-PR. The web-client source is reachable: `http://127.0.0.1:13579/home/` serves
-the NAS's Vue app; upload/task logic lives in lazy chunks (search
-`znetdisk/share/transfer`).
+Endpoints, with what's wrapped vs. still open:
+
+| Endpoint | Notes | Status |
+|----------|-------|--------|
+| `auth/check`, `auth/userinfo` | `userinfo` returns baidu `uk`, `vip_type`, **`iot_vip_type`** (百度NAS会员), `quota`, `iot_vip_cashier` | ✅ wrapped (measured) |
+| `file/list` | `{path, page(1-based), limit}` → own-pan entries with **`fs_id`** (note: not `fsid`), `server_filename`, `size`, `isdir` | ✅ wrapped (measured) |
+| `task/list` | `{page, limit, state}` (`state`: `""`/`running`/`done`/`pause`/`fail`) → `data.list[]`, `task_count`, `unfinished_task` | ✅ wrapped (measured) |
+| `fail/list` | `{page, limit, task_id?}` → `data.list[]`, `total`; entries carry `baidu_fail_code`, `advice`, `fail_reason` | ✅ wrapped (measured) |
+| `share/verify` | `{short_url, pwd}` → `data.spwd` (server-side share verification, no local cookie) | ✅ wrapped (source only) |
+| `share/filelist` | `{short_url, spwd, page, limit, path}` → shared entries incl. **`fsid`**, `md5`, `size` | ✅ wrapped (source only) |
+| `task/action` | `{method, task_id?}`; methods `resume/pause/clean/pause_all/resume_all/clean_all/clean_all_done/resume_fail_all/clean_fail_all` | ✅ wrapped (write; `zs baidu retry` only maps `resume`/`resume_fail_all`, confirm-gated) |
+| `share/transfer`, `share/transfer_result` | save share → own pan; **gated**: non-NAS-VIP gets `code 15 需要NAS会员权限` | ⛔ documented, not wrapped (mutating + gated) |
+| `file/download` | `{file_ids, save_path}` — NAS-side download task from own pan (accepted for non-VIP but observed **0 B/s stall** — Baidu throttles non-VIP openapi hard) | ⛔ documented, not wrapped (mutating + stalls) |
+| `file/upload`, `file/newdir`, `auth/token`, `auth/logout`, `sync/*`, `autobackup/*`, `membership/active`, `order/*`, `zdrive/baidu/rclone/mountinfo` | write/config/auth endpoints (module 2934 in the NAS Vue app defines them all) | ⛔ documented, not wrapped (mutating) |
+
+**Correction learned while wiring this up.** The earlier note here (and #12)
+listed `down_state` as `5=queued, 6=retrying`. The NAS web app's task-center
+render code (module `39137`) actually branches on `1=downloading, 2=paused,
+4=done, 6=queued, 9=creating-backup-dir, 10=hashing-files`, and "retrying" is
+**not a distinct state** — it's `down_state==1 && retry_times>0`. A live
+`task/list` sample (`down_state=6, retry_times=0`, 31 unfinished) matches
+`6=queued`, not `6=retrying`. `zs baidu tasks` and api-reference.md use the
+source-backed mapping. "Failure" is likewise a combination (`fail_reason`, or
+`fail_num>0 && down_state==4`, or `baidu_limit/illegal_content/space_fulle`),
+never a single `down_state`.
+
+**Still open (the interesting remaining work):**
+- A `baidu-backup` **skill** for agents (scan pan → propose a save plan → the
+  membership-gated transfer/download stays human-confirmed). Needs a NAS-VIP
+  account to validate end-to-end.
+- Live verification of `share/verify` → `share/filelist` → `share/transfer` on a
+  NAS-VIP account (this PR could only source them, not exercise the gated writes).
+
+Source: the NAS's Vue app at `http://127.0.0.1:13579/home/`; the endpoints are
+defined in lazy chunk `64392` (module `2934`), the task-center UI in chunk
+`4548` (module `39137`). `grep -a znetdisk app.asar` finds **nothing** — this
+module runs on the NAS, not in the desktop Electron client.
+
 
 ## Skills family
 

@@ -60,6 +60,67 @@ The adapter talks to the same `ZSpaceClient`, so whatever platform auto-detectio
 works for `zs` (macOS / Windows / Linux, or `ZS_CONFIG_DIR`) also works for the
 scanner.
 
+## Baidu NetDisk (百度网盘) via the NAS `/znetdisk/*` module
+
+The NAS ships an official Baidu NetDisk module; the desktop-client proxy exposes
+it under `/znetdisk/*` with the **same** token/nasid/device_id auth and
+`{code:"200", msg, data}` envelope as the file API. zspace-cli wraps the
+**read-only** half of it — no local Baidu cookie needed, because the NAS verifies
+shares and pulls files server-side.
+
+```bash
+zs baidu check                 # is a Baidu account linked? VIP flags + quota
+zs baidu ls /                  # browse your own pan through the NAS
+zs baidu tasks --state fail    # transfer tasks (state: running/done/pause/fail)
+zs baidu fails --task-id <id>  # per-file failure reasons (baidu_fail_code, advice)
+zs baidu retry <task-id>       # resume a paused/failed task (mutates; asks first)
+```
+
+SDK equivalents: `client.baidu_check()`, `baidu_userinfo()`, `baidu_ls(path)`,
+`baidu_tasks(state)`, `baidu_fail_list(task_id)`, `baidu_share_verify()`,
+`baidu_share_list()`, and `baidu_task_action(method, task_id)`. `check`/`ls`/
+`tasks`/`fails` accept `--json`.
+
+**Auth it needs.** A Baidu account must already be linked to the NAS account —
+`zs baidu check` reports `is_login`. Linking is a browser OAuth flow the web UI
+drives (`/znetdisk/auth/token`); the CLI/SDK deliberately do **not** do it, and
+never print the returned OAuth URL. There is no MCP tool for this integration:
+see below.
+
+**What is gated / unverified.** Share **transfer** (`share/transfer`) and
+NAS-side **download** (`file/download`) require 百度NAS会员 (`iot_vip_type == 1`);
+non-members get `code 15 需要NAS会员权限`, and non-VIP `file/download` tasks were
+observed stalled at 0 B/s (Baidu throttles non-VIP openapi hard). Those, plus
+every write/config endpoint (`sync/*`, `autobackup/*`, `order/*`,
+`membership/active`, `auth/token`, `auth/logout`, `file/upload`, `file/newdir`),
+are **documented but not wrapped** — they mutate remote state or are membership-
+gated, so they can't be verified without changing a real account. The wrapped
+read endpoints (`auth/check`, `auth/userinfo`, `file/list`, `task/list`,
+`fail/list`) were probed read-only against a real NAS; `share/verify`,
+`share/filelist` and `task/action` are sourced from the NAS web app's code but
+not exercised live. Full endpoint table, field lists, `down_state` semantics and
+the measured-vs-inferred split: [skills/zspace-nas/api-reference.md](../skills/zspace-nas/api-reference.md#百度网盘集成-apiznetdisk).
+
+**Relationship to `baidu-pan-skill`.** These are two complementary routes, not
+duplicates:
+
+| | zspace-cli `/znetdisk/*` (this) | [baidu-pan-skill](https://github.com/skyzhao1223/baidu-pan-skill) |
+|---|---|---|
+| Path | NAS-side: server verifies the share, NAS pulls to disk | Local: browser cookie → transfer-save → chunked download |
+| Needs | A Baidu account linked to the NAS | Your own browser Baidu login (cookie extraction) |
+| Gate | 百度NAS会员 for transfer/direct-download | No NAS membership, but Baidu's account-level throttle applies |
+| Best for | Pan → NAS when you have NAS VIP | Pan → local (then `zs up` to NAS) when you don't |
+
+So a share link can go **straight to the NAS** through this module if you have
+NAS VIP; otherwise `baidu-pan-skill` downloads it locally and `zs up` uploads it.
+Neither path bypasses Baidu's throttling or the membership gate — both document
+them as-is.
+
+> **Interoperability note.** This is unofficial reverse-engineering of the NAS's
+> Baidu module. Endpoint names, `code 15`, the `down_state` values and field
+> names can break on any NAS firmware or client update; pin failures to the exact
+> `code`/`msg` when reporting.
+
 ## Organizer skill family (any NAS via mount)
 
 `zs skill` installs 9 read-only organizer skills on top of `zspace-nas`:
