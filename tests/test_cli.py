@@ -205,6 +205,35 @@ def test_cli_up_verify():
     assert c.upload.call_args.kwargs["verify"] is True
 
 
+def test_cli_up_resume_defaults_on():
+    local = Path("/tmp/some-local-file.txt")
+    r, out, c = _run_cmd("up", str(local), "/d")
+    assert r.exit_code == 0
+    assert c.upload.call_args.kwargs["resume"] is True
+
+
+def test_cli_up_no_resume():
+    local = Path("/tmp/some-local-file.txt")
+    r, out, c = _run_cmd("up", str(local), "/d", "--no-resume")
+    assert r.exit_code == 0
+    assert c.upload.call_args.kwargs["resume"] is False
+    assert "断点续传" not in out
+
+
+def test_cli_up_reports_resumed_bytes():
+    local = Path("/tmp/some-local-file.txt")
+    r, out, c = _run_cmd(
+        "up", str(local), "/d",
+        client_overrides={"upload.return_value": {
+            "path": "/d/some-local-file.txt", "name": "some-local-file.txt",
+            "size": 10, "resumed_from": 4194304,
+        }},
+    )
+    assert r.exit_code == 0
+    assert "断点续传" in out
+    assert "4.0 MB" in out
+
+
 def test_cli_down():
     r, out, _ = _run_cmd("down", "/d/a.txt", "/tmp")
     assert r.exit_code == 0

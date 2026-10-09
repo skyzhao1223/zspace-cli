@@ -418,6 +418,7 @@ class ZSpaceClient:
         new_name: str | None = None,
         progress: ProgressCallback | None = None,
         verify: bool = False,
+        resume: bool = True,
     ) -> dict[str, Any]:
         """Upload a local file to a directory on the NAS.
 
@@ -426,6 +427,8 @@ class ZSpaceClient:
         ``new_name``   — optional target filename (defaults to local basename).
         ``progress``   — optional callback ``(bytes_done, bytes_total)``.
         ``verify``     — download the uploaded file and compare its MD5 with the local file.
+        ``resume``     — for sliced uploads, ask the NAS how many bytes it already
+                         accepted for this session and skip them (see _tmpinfo_size).
 
         Small files go through ``/v2/file/create`` in a single request. Large
         files (> ``slice_threshold``) use the desktop client's sliced
@@ -441,7 +444,7 @@ class ZSpaceClient:
         total = local.stat().st_size
 
         if total > self.slice_threshold:
-            result = self._upload_sliced(local, target, total, progress)
+            result = self._upload_sliced(local, target, total, progress, resume)
             return self._finish_upload(result, local, target, verify)
 
         last_exc: BaseException | None = None
@@ -466,7 +469,7 @@ class ZSpaceClient:
                 except httpx.HTTPStatusError as exc:
                     if exc.response.status_code == 413:
                         # body too large for the local proxy — switch to slices
-                        result = self._upload_sliced(local, target, total, progress)
+                        result = self._upload_sliced(local, target, total, progress, resume)
                         return self._finish_upload(result, local, target, verify)
                     if not self._is_retryable(exc) or attempt >= self.max_retries:
                         raise
@@ -508,12 +511,50 @@ class ZSpaceClient:
                 f"上传校验失败: MD5 不匹配 (local={local_md5}, remote={remote_md5})",
             )
 
+    def _tmpinfo_size(self, target: str, uuid: str, total: int) -> int:
+        """Bytes the NAS already accepted for this upload session, else 0.
+
+        ``GET /v2/file/tmpinfo?path=<target>&uuid=<uuid>`` returns the partial
+        upload's temporary entry while a session is open. The desktop client
+        reads ``data.size`` as ``finishedSize`` and resumes from it; the temp
+        object is a hidden dotfile named ``.<name>.z<session id>`` beside the
+        target. Measured against a real NAS: after three 2 MB slices the
+        endpoint reports ``size == "6291456"``, and once the upload completes
+        the session is consumed and the same query answers ``N001315``
+        (文件不存在) — so "no session" and "already finished" are the same
+        signal, and both mean start over.
+
+        Any failure here must not fail the upload: resume is an optimisation,
+        and re-sending from zero is accepted even when a partial session exists
+        (measured: a slice at ``seek=0`` after one slice had landed returns 200
+        and the reported size does not go backwards).
+        """
+        try:
+            body = self._send(
+                "GET", "/v2/file/tmpinfo", params={"path": target, "uuid": uuid}
+            )
+        except ZSpaceError:
+            return 0
+        raw = (body.get("data") or {}).get("size")
+        if not isinstance(raw, (str, int)):
+            return 0
+        try:
+            size = int(raw)
+        except (TypeError, ValueError):
+            return 0
+        # Only trust a strict partial offset. size >= total would mean nothing
+        # left to send, but the NAS assembles the target only when the final
+        # slice lands, so skipping every slice could leave no file at all; fall
+        # back to a full re-send, which the measurement above shows is safe.
+        return size if 0 < size < total else 0
+
     def _upload_sliced(
         self,
         local: Path,
         target: str,
         total: int,
         progress: ProgressCallback | None = None,
+        resume: bool = True,
     ) -> dict[str, Any]:
         """Sliced upload via /v2/file/upload — the desktop client's protocol.
 
@@ -527,8 +568,13 @@ class ZSpaceClient:
         mtime_ms = math.ceil(st.st_mtime * 1000)
         uuid = _upload_uuid(mtime_ms, total, target)
         modify_time = math.ceil(mtime_ms / 1000)
-        sent = 0
+        sent = self._tmpinfo_size(target, uuid, total) if resume else 0
+        sent_resume = sent
         with local.open("rb") as fh:
+            if sent:
+                fh.seek(sent)
+                if progress is not None:
+                    progress(sent, total)
             while sent < total:
                 length = min(self.slice_size, total - sent)
                 body = fh.read(length)
@@ -565,7 +611,14 @@ class ZSpaceClient:
                 sent += length
                 if progress is not None:
                     progress(sent, total)
-        return {"path": target, "name": target.rsplit("/", 1)[-1], "size": total}
+        result: dict[str, Any] = {
+            "path": target, "name": target.rsplit("/", 1)[-1], "size": total,
+        }
+        if sent_resume:
+            # Only present when bytes were actually skipped, so the common path
+            # keeps returning exactly the shape callers (and tests) already see.
+            result["resumed_from"] = sent_resume
+        return result
 
     def _post_slice(self, url: str, body: bytes, headers: dict[str, str]) -> dict[str, Any]:
         """POST one upload slice, retrying transient failures like _send().
