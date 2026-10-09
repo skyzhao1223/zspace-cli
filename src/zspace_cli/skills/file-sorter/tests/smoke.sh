@@ -276,6 +276,7 @@ def run(*extra, target_root=root):
         [sys.executable, f"{skill}/file_sorter.py", "scan",
          "--root", target_root, "--output", out, *extra],
         capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
     )
     assert r.returncode == 0, r.stderr
     return json.loads(open(out, encoding="utf-8").read())

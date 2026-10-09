@@ -115,6 +115,7 @@ r = subprocess.run(
     [sys.executable, f"{skill}/backup_auditor.py", "scan",
      "--root", bk, "--stale-days", "35", "--keep", "3", "--output", out],
     capture_output=True, text=True,
+    encoding="utf-8", errors="replace",
 )
 assert r.returncode == 0, r.stderr
 scan = json.loads(open(out, encoding="utf-8").read())
@@ -139,6 +140,7 @@ r2 = subprocess.run(
     [sys.executable, f"{skill}/backup_auditor.py", "coverage",
      "--source", src, "--backup", bk, "--stale-days", "35", "--output", out2],
     capture_output=True, text=True,
+    encoding="utf-8", errors="replace",
 )
 assert r2.returncode == 0, r2.stderr
 cov = json.loads(open(out2, encoding="utf-8").read())

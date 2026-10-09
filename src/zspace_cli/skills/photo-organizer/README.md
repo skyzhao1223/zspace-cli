@@ -210,12 +210,6 @@ bash skills/photo-organizer/tests/smoke.sh
 - ~~白名单功能区目录名写死中文/英文常见集合,自定义库名需改 `WHITELIST_DIRS`~~ →
   **已解决**(issue #15):同目录 `config.json` 的 `whitelist_dirs` 追加自定义库名,
   `extension_overrides` 追加自定义扩展名归属,都不用改脚本
-- **内置 `WHITELIST_DIRS` 里的 `"RAW"` 是一条死条目**:判定用的是
-  `name.lower() in WHITELIST_DIRS`,而集合里存的是大写 `"RAW"`,所以名为 `RAW` 或
-  `raw` 的目录都匹配不上它(实测 `dir_problems("RAW", 1, False)` 仍返回
-  「目录名不符合日期规范」)。这是本机制**之前**就有的瑕疵,本 PR 没动它 ——
-  改了会改变既有输出,与「零破坏性」冲突。`config.json` 的 `whitelist_dirs` 是
-  大小写不敏感的,写 `["raw"]` 即可绕过。留给维护者决定是修集合还是修判定
 - **`config.json` 只能改扩展名归类与目录白名单**:`BAD_DIR` / `DATE_DIR_OK` /
   `CAMERA_ROLL_DIR` 这些目录名正则、连拍阈值(≥5 张连号)、`MIN_PLAUSIBLE_YEAR`
   都还是硬编码的

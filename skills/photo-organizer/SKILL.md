@@ -386,7 +386,6 @@ JSON 侧对应两个字段(同样只在 `--exif` 时出现):
 - 视频与照片默认同树;要物理分离(照片/视频两库)需用户先定结构再改校验
 - **`config.json` 只能改扩展名归类与目录白名单**:`BAD_DIR` / `DATE_DIR_OK` / `CAMERA_ROLL_DIR` 这些**目录名正则**、连拍阈值(≥5 张连号)、`MIN_PLAUSIBLE_YEAR` 都还是硬编码的,要改得动脚本
 - **`config.json` 是 per-安装、不是 per-库**:一份安装对应一份配置。多个照片库想用不同白名单,目前只能装两份 skill。加一个 `--config PATH` 是自然的后续
-- 内置 `WHITELIST_DIRS` 里的 `"RAW"` 是大写,而判定用的是 `name.lower() in WHITELIST_DIRS`,所以名为 `RAW`/`raw` 的目录其实**匹配不上**这一条 —— 这是本机制之前就有的小瑕疵,本 PR 没动它(改了会影响既有输出);`config.json` 的 `whitelist_dirs` 是大小写不敏感的,写 `["raw"]` 即可绕过
 
 ## 故障排查
 

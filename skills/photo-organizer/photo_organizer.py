@@ -45,7 +45,7 @@ SKIP_DIRS = {
 }
 WHITELIST_DIRS = {
     "截图", "截屏", "视频", "照片", "相册", "待整理", "其他", "收藏", "原图", "实况",
-    "全景", "人像", "延时", "慢动作", "导入", "精选", "已整理", "长曝光", "RAW",
+    "全景", "人像", "延时", "慢动作", "导入", "精选", "已整理", "长曝光", "raw",
     "screenshots", "videos", "albums", "favorites", "camera", "imports",
     "recents", "edited", "panorama", "portrait", "slo-mo", "burst", "timelapse",
 }
