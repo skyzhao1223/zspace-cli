@@ -106,10 +106,11 @@ zs skill ~/your-project/skills/ --only nas-report,photo-organizer   # 或按需�
 | `zs tree [path]` | 树形浏览（`-d/--depth N`，默认 2） |
 | `zs up <local> <remote_dir>` | 上传（`-n/--name` 指定远端文件名；大文件自动切换分片上传） |
 | `zs down <path> [dir]` | 下载 |
+| `zs baidu check/ls/tasks/fails/retry` | 百度网盘（经 NAS `/znetdisk/*` 模块）：只读查询为主，`retry` 会改任务状态 — [详情](integrations.md#baidu-netdisk-百度网盘-via-the-nas-znetdisk-module) |
 | `zs skill <dir>` | 把 Agent skills 复制到项目目录（`--list` 列出 / `--only` 选装） |
 | `zs --config-dir <dir>` | 指定非默认 `vuex.json` 位置（或环境变量 `ZS_CONFIG_DIR`） |
 
-`zs check`、`zs ls`、`zs info`、`zs find`、`zs tree` 支持 `--json` 机器可读输出；`zs mv`/`zs cp`/`zs rm`/`zs down` 的源路径支持 `* ?` glob 通配。
+`zs check`、`zs ls`、`zs info`、`zs find`、`zs tree` 支持 `--json` 机器可读输出；`zs mv`/`zs cp`/`zs rm`/`zs down` 的源路径支持 `* ?` glob 通配；`zs baidu check`/`ls`/`tasks`/`fails` 也支持 `--json`。
 
 > `ls` 自动分页（NAS 单次最多 50 条，会循环拉全）；`find` 走 NAS 全文索引，跨目录搜索。上传/下载在真实终端显示进度条，且为流式传输（不整文件读入内存）。中文路径开箱即用。超过 64MB 的文件自动走桌面客户端的 `/v2/file/upload` 分片协议（2MB/片）——本地代理对单请求体积有上限（超限返回 413），小文件遇到 413 也会自动回退到分片上传。
 
@@ -133,6 +134,7 @@ zs skill ~/your-project/skills/ --only nas-report,photo-organizer   # 或按需�
 | 连接检查 | `zs check` | `client.is_connected()` | `zspace_check` |
 | 存储池容量 | `zs check` | `client.pool_info()` | `zspace_pool_info` |
 | 磁盘诊断 | — | `client.disk_stats()` | `zspace_disk_stats` |
+| 百度网盘（只读） | `zs baidu check/ls/tasks/fails/retry` | `client.baidu_*()` | — |
 
 > `ls` 会自动分页（NAS 单次最多返回 50 条，会循环拉全）；`find` 走 NAS 全文索引，跨目录搜索。
 

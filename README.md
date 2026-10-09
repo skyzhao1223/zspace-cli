@@ -76,12 +76,14 @@ with ZSpaceClient() as zs:
 | `zs tree [path]` | Tree view (`-d/--depth N`, default 2) |
 | `zs up <local> <remote_dir>` | Upload (`-n/--name` to rename; `--verify` for post-upload MD5 round-trip verification; large files auto-switch to sliced upload) |
 | `zs down <path> [dir]` | Download |
+| `zs baidu check/ls/tasks/fails/retry` | Baidu NetDisk via the NAS `/znetdisk/*` module (read side; `retry` mutates task state) — [details](docs/integrations.md#baidu-netdisk-百度网盘-via-the-nas-znetdisk-module) |
 | `zs skill <dir>` | Copy Agent skills into a project (`--list`, `--only a,b`) |
 | `zs --config-dir <dir>` | Point at a non-default `vuex.json` location (or `ZS_CONFIG_DIR`) |
 
 `zs check`, `zs ls`, `zs info`, `zs find`, `zs tree` accept `--json` for
 machine-readable output. `zs mv`/`zs cp`/`zs rm`/`zs down` accept `* ?` glob
-patterns on the source path.
+patterns on the source path. `zs baidu check`/`ls`/`tasks`/`fails` also accept
+`--json`.
 
 > `ls` pages through large directories automatically (the NAS API returns at most 50 entries per call). `find` uses the NAS full-text index, so it searches across directories. Upload/download show a progress bar on a real terminal and stream the file (no full-file buffering). Pass `--verify` to `zs up` to download the uploaded file to a temporary directory and compare its MD5 with the local source; verification is opt-in because it doubles transfer. CJK paths work out of the box. Files above 64 MB are uploaded through the desktop client's sliced `/v2/file/upload` protocol (2 MB slices), because the local proxy rejects oversized single-request bodies with HTTP 413; a 413 on a smaller file falls back to slices automatically.
 
@@ -105,6 +107,7 @@ patterns on the source path.
 | Health check | `zs check` | `client.is_connected()` | `zspace_check` |
 | Storage pools | `zs check` | `client.pool_info()` | `zspace_pool_info` |
 | Disk diagnostics | — | `client.disk_stats()` | `zspace_disk_stats` |
+| Baidu NetDisk (read side) | `zs baidu check/ls/tasks/fails/retry` | `client.baidu_*()` | — |
 
 ---
 

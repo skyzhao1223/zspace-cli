@@ -893,3 +893,187 @@ def test_upload_slice_transient_code_retries(creds, tmp_path):
     result = c.upload(src, "/dst")
     assert c._http.post.call_count == 2
     assert result["path"] == "/dst/f.bin"
+
+
+# ── Baidu NetDisk (/znetdisk/*) ──
+
+
+def _baidu_post_data(client, idx: int = -1) -> dict:
+    """Form data of the nth (default last) mocked POST."""
+    return client._http.post.call_args_list[idx].kwargs["data"]
+
+
+def _baidu_url(client, idx: int = -1) -> str:
+    return client._http.post.call_args_list[idx][0][0]
+
+
+def test_baidu_check_returns_data_and_hits_endpoint(client):
+    client._http.post.return_value = _resp_mock(
+        "200", {"is_login": True, "url": "https://pan.baidu.com/oauth"}
+    )
+    data = client.baidu_check()
+    assert data["is_login"] is True
+    assert _baidu_url(client).startswith("/znetdisk/auth/check")
+    # common auth params ride along exactly like the file API
+    sent = _baidu_post_data(client)
+    assert sent["token"] == "tok"
+    assert sent["nasid"] == "N1"
+
+
+def test_baidu_check_business_error_raises(client):
+    """znetdisk uses the same envelope, so _check_response must raise on it."""
+    client._http.post.return_value = _resp_mock("15", None, msg="需要NAS会员权限")
+    with pytest.raises(ZSpaceError) as ei:
+        client.baidu_check()
+    assert ei.value.code == "15"
+
+
+def test_baidu_userinfo_passes_through_data(client):
+    payload = {
+        "user_info": {"uk": 1, "vip_type": 0, "iot_vip_type": 0},
+        "quota": {"used": 10, "total": 100},
+        "iot_vip_cashier": "https://example.invalid/buy",
+    }
+    client._http.post.return_value = _resp_mock("200", payload)
+    data = client.baidu_userinfo()
+    assert data == payload
+    assert _baidu_url(client).startswith("/znetdisk/auth/userinfo")
+
+
+def test_baidu_ls_single_page(client):
+    client._http.post.return_value = _resp_mock("200", {"current_page": 1, "list": [
+        {"fs_id": 111, "server_filename": "a.mkv", "path": "/a.mkv",
+         "size": 10, "isdir": 0},
+    ]})
+    entries = client.baidu_ls("/")
+    assert len(entries) == 1
+    assert entries[0]["fs_id"] == 111
+    sent = _baidu_post_data(client)
+    assert sent["path"] == "/"
+    assert sent["page"] == "1"
+    assert sent["limit"] == "50"
+
+
+def test_baidu_ls_pages_until_short_page(client):
+    """page is 1-based and increments; a full page must trigger another fetch."""
+    def fake_post(url, **kwargs):
+        page = int(kwargs["data"]["page"])
+        n = 50 if page < 3 else 7
+        rows = [{"fs_id": page * 100 + i} for i in range(n)]
+        return _resp_mock("200", {"list": rows, "current_page": page})
+
+    client._http.post.side_effect = fake_post
+    entries = client.baidu_ls("/docs", page_size=50)
+    assert len(entries) == 107
+    assert client._http.post.call_count == 3
+    assert [_baidu_post_data(client, i)["page"] for i in range(3)] == ["1", "2", "3"]
+    assert all(_baidu_url(client, i).startswith("/znetdisk/file/list") for i in range(3))
+
+
+def test_baidu_ls_missing_list_key_is_empty(client):
+    client._http.post.return_value = _resp_mock("200", {"current_page": 1})
+    assert client.baidu_ls("/") == []
+
+
+def test_baidu_share_verify_returns_spwd(client):
+    client._http.post.return_value = _resp_mock("200", {"spwd": "verified-pwd"})
+    spwd = client.baidu_share_verify("1AbCdEf", pwd="ab12")
+    assert spwd == "verified-pwd"
+    assert _baidu_url(client).startswith("/znetdisk/share/verify")
+    sent = _baidu_post_data(client)
+    assert sent["short_url"] == "1AbCdEf"
+    assert sent["pwd"] == "ab12"
+
+
+def test_baidu_share_verify_missing_spwd_is_empty_string(client):
+    client._http.post.return_value = _resp_mock("200", {})
+    assert client.baidu_share_verify("1x") == ""
+
+
+def test_baidu_share_list_sends_all_params(client):
+    client._http.post.return_value = _resp_mock("200", {"count": 1, "list": [
+        {"fsid": 9, "server_filename": "b.mp4", "size": 5, "md5": "m", "isdir": 0},
+    ]})
+    entries = client.baidu_share_list("1AbC", spwd="pw", path="/sub")
+    assert entries[0]["fsid"] == 9
+    sent = _baidu_post_data(client)
+    assert sent["short_url"] == "1AbC"
+    assert sent["spwd"] == "pw"
+    assert sent["path"] == "/sub"
+    assert sent["page"] == "1"
+    assert _baidu_url(client).startswith("/znetdisk/share/filelist")
+
+
+def test_baidu_share_list_pages(client):
+    def fake_post(url, **kwargs):
+        page = int(kwargs["data"]["page"])
+        n = 10 if page < 2 else 3
+        return _resp_mock("200", {"list": [{"fsid": i} for i in range(n)]})
+
+    client._http.post.side_effect = fake_post
+    entries = client.baidu_share_list("1AbC", page_size=10)
+    assert len(entries) == 13
+    assert client._http.post.call_count == 2
+
+
+def test_baidu_tasks_default_state_is_all(client):
+    client._http.post.return_value = _resp_mock("200", {"task_count": 1, "list": [
+        {"task_id": "t1", "name": "f.mkv", "down_state": 6},
+    ]})
+    tasks = client.baidu_tasks()
+    assert tasks[0]["task_id"] == "t1"
+    sent = _baidu_post_data(client)
+    assert sent["state"] == ""
+    assert _baidu_url(client).startswith("/znetdisk/task/list")
+
+
+def test_baidu_tasks_state_filter_passthrough(client):
+    client._http.post.return_value = _resp_mock("200", {"list": []})
+    client.baidu_tasks(state="fail")
+    assert _baidu_post_data(client)["state"] == "fail"
+
+
+def test_baidu_tasks_pages_until_short_page(client):
+    def fake_post(url, **kwargs):
+        page = int(kwargs["data"]["page"])
+        n = 20 if page == 1 else 11
+        return _resp_mock("200", {"list": [{"task_id": f"t{page}-{i}"} for i in range(n)]})
+
+    client._http.post.side_effect = fake_post
+    tasks = client.baidu_tasks(page_size=20)
+    assert len(tasks) == 31
+    assert client._http.post.call_count == 2
+
+
+def test_baidu_fail_list_omits_task_id_when_none(client):
+    client._http.post.return_value = _resp_mock("200", {"total": 0, "list": []})
+    client.baidu_fail_list()
+    assert "task_id" not in _baidu_post_data(client)
+    assert _baidu_url(client).startswith("/znetdisk/fail/list")
+
+
+def test_baidu_fail_list_scopes_to_task(client):
+    client._http.post.return_value = _resp_mock("200", {"total": 1, "list": [
+        {"file_name": "x.mkv", "fail_reason": "r", "baidu_fail_code": -1},
+    ]})
+    fails = client.baidu_fail_list(task_id="t9")
+    assert fails[0]["file_name"] == "x.mkv"
+    assert _baidu_post_data(client)["task_id"] == "t9"
+
+
+def test_baidu_task_action_includes_method_and_task_id(client):
+    client._http.post.return_value = _resp_mock("200", {})
+    body = client.baidu_task_action("resume", task_id="t1")
+    assert body["code"] == "200"
+    sent = _baidu_post_data(client)
+    assert sent["method"] == "resume"
+    assert sent["task_id"] == "t1"
+    assert _baidu_url(client).startswith("/znetdisk/task/action")
+
+
+def test_baidu_task_action_bulk_omits_task_id(client):
+    client._http.post.return_value = _resp_mock("200", {})
+    client.baidu_task_action("resume_fail_all")
+    sent = _baidu_post_data(client)
+    assert sent["method"] == "resume_fail_all"
+    assert "task_id" not in sent
