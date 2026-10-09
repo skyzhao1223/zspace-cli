@@ -927,5 +927,51 @@ print("  ✓ _cfg_match 锚定规则:15 条纯函数断言(与 --keep-dir 同一
 PYEOF
 rm -rf "$CFG_SRC"
 
+echo "=== TEST 8: FIFO/socket 不当文件(家族审计 F8)==="
+# F8:_walk 末尾曾是裸 else → _collect(...),把 FIFO 与 socket 也当普通文件收进
+# stats,还给出行动计划 —— 名叫 capture.jpg 的 FIFO 拿到 category=image
+# action=move 的**移动计划**,而 file-sorter 是家族里输出直接被 Agent 拿去 mv
+# 执行的那个。其余 8 家都是 elif entry.is_file()。对全常规文件的树,本改动
+# 零输出差异(TEST 4 的既有断言即负控制)。
+FS_SKILL_DIR="$SKILL_DIR" "$PY" - <<'PYEOF'
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+
+skill = os.environ["FS_SKILL_DIR"]
+script = f"{skill}/file_sorter.py"
+
+if not hasattr(os, "mkfifo") or not hasattr(socket, "AF_UNIX"):
+    print("  ⊘ F8 在 Windows 上跳过(无 FIFO/AF_UNIX socket);常规文件行为由 TEST 4 钉住")
+else:
+    root = tempfile.mkdtemp(prefix="fs-f8.")
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        with open(os.path.join(root, "notes.txt"), "wb") as fh:
+            fh.write(b"N" * 1000)
+        os.mkfifo(os.path.join(root, "capture.jpg"))
+        s.bind(os.path.join(root, "live.sock"))
+        r = subprocess.run([sys.executable, script, "scan", "--root", root, "--json"],
+                           capture_output=True, encoding="utf-8", errors="replace")
+        assert r.returncode == 0, (r.returncode, r.stderr[-400:])
+        d = json.loads(r.stdout)
+        st = d["stats"]
+        blob = json.dumps(d, ensure_ascii=False)
+        # 修复前:files=3,capture.jpg 领 category=image action=move,live.sock 领 review
+        assert st["files"] == 1, st
+        assert "capture.jpg" not in blob, blob[:300]
+        assert "live.sock" not in blob, blob[:300]
+        paths = [i["path"] for i in d["issues"]]
+        assert paths == ["notes.txt"], paths
+        print("  ✓ FIFO/socket 不入统计、不给行动计划:files=1,只剩 notes.txt")
+    finally:
+        s.close()
+        shutil.rmtree(root, ignore_errors=True)
+PYEOF
+
 echo ""
 echo "🎉 所有 smoke test 通过"

@@ -558,7 +558,12 @@ class Sorter:
                     continue
                 self.stats["dirs"] += 1
                 self._walk(entry.path, rel_parts + [name])
-            else:
+            elif entry.is_file():
+                # 只收常规文件(家族审计 F8):原先是裸 else,FIFO/socket 也被
+                # _collect 当文件收进 stats 并给出行动计划 —— 名叫 capture.jpg
+                # 的 FIFO 会拿到 category=image action=move 的移动计划,而本
+                # skill 的输出是 Agent 直接拿去 mv 执行的。其余 8 个 scanner
+                # 都是 elif entry.is_file();对全常规文件的树零输出差异。
                 self._collect(entry, rel_parts, name)
 
     def _collect(self, entry: os.DirEntry, rel_parts: list[str],
