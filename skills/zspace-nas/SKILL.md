@@ -77,6 +77,13 @@ zs recycle empty                            # 清空整个个人回收站（不�
 （接口会返回成功、`total_num: 0`）。清空前务必先 `zs recycle list`——里面可能混着
 别人或早前删的东西。
 
+> **挂载盘上它叫 `@Recycle`，不是 `/.recycle/my`。** 本 skill 的 `zs` 命令走 API，
+> 看到的是 `/.recycle/my`；而 `skills/` 下那些整理脚本跑在 SMB 挂载路径上，看到的是
+> 共享根下的 `@Recycle` 目录（另有 `.zspace_trash` 变体）。已核实两者都不在
+> `/<pool>/my/data` 里面。自己写脚本扫挂载盘时**必须跳过 `@Recycle`**，否则会把已删除
+> 的数据算成在库数据——这类错误不报错，只让数字安静地偏大（详见
+> [api-reference.md](api-reference.md) 的「同一样东西的三种名字」）。
+
 ## Python SDK
 
 ```python

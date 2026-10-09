@@ -225,6 +225,55 @@ Docker、RAID 元数据、别的账号的文件全都在遍历视野之外。
 实际存储位置是 `/<pool>/.recycle/my/<名字>`，该路径本身对文件 API 返回 `N001411`，
 只能通过上面的虚拟根 `/.recycle/my` 访问。
 
+### 同一样东西的三种名字（API 视角 vs 挂载视角）
+
+回收站在不同访问方式下叫法不同，很容易被当成三个无关的东西：
+
+| 视角 | 名字 | 出处 |
+|------|------|------|
+| API 虚拟根 | `/.recycle/my`、`/.public_recycle` | 本文实测（`nb/list` 可列举） |
+| API 存储路径 | `/<pool>/.recycle/my/<名字>` | 本文实测（`nb/list` 返回的 `path` 字段） |
+| **挂载文件系统** | **`@Recycle`**，另有 `.zspace_trash` 点前缀变体 | skills 家族实测，见 `tests/test_skill_family.py` |
+
+已核实的边界：`@Recycle` 和 `.zspace_trash` **都不在 `/<pool>/my/data` 里面**
+（API 对 `/sata11/my/data/@Recycle` 返回 `N001315 不存在`）。而 `/sata11/@Recycle`
+返回的是 `N001411 无权限` —— 注意这**不能证明它存在**：文件 API 对 `my/data` 之外的
+任何路径都一律返回 `N001411`，无论真假。所以只能说它们位于共享根层级，
+正好落在 API 的盲区里，也正是 SMB 挂载后能看见的位置。
+
+**未证实**：`@Recycle` 与 `/.recycle/my` 是否是同一份存储的两个名字（很可能是，
+但没有挂载环境无法对照验证）；`.zspace_trash` 是它的变体还是另一套机制。
+
+#### 为什么这件事会咬人
+
+`skills/` 下 9 个整理脚本跑在**挂载路径**上，看到的是 `@Recycle`，不是
+`/.recycle/my`。历史上 `@Recycle` 只出现在 photo-organizer 的 `SKIP_DIRS` 里，
+另外 8 个扫描器把回收站内容当活数据统计。upstream 实测过一个例子：库里放着
+`周杰伦/晴天.mp3` 和 `@Recycle/回收歌手/被删的歌.mp3`，结果 music-organizer 报
+`artists=2, audio_files=2` —— 把回收站里的目录注册成了一个「歌手」，把已删除的
+曲目当成库内一首缺封面缺曲目号的歌；file-sorter 则把这个已删文件列为待搬运的活文件。
+
+现在由 `tests/test_skill_family.py` 用 ast 解析钉死：`TRASH_DIRS` 的 14 个名字 ×
+9 个扫描器 × 2 份镜像树，任何一个漏掉都会测试失败。这 14 个是：
+
+| 名字 | 来源 |
+|------|------|
+| `@Recycle` | **极空间回收站**（就是 F4 修复补上的那个） |
+| `.zspace_trash` | 极空间回收站（点前缀变体） |
+| `#recycle` | 群晖回收站 |
+| `@eaDir` | 群晖缩略图元数据 |
+| `#@__recycle_bin` | 威联通回收站 |
+| `$RECYCLE.BIN` / `System Volume Information` | Windows |
+| `.Trashes` / `.Spotlight-V100` / `.fseventsd` / `.TemporaryItems` | macOS |
+| `.snapshots` | NFS / 快照 |
+| `.trash` / `lost+found` | 通用 / ext 文件系统 |
+
+（`node_modules`、`.git` 也在各扫描器的 `SKIP_DIRS` 里，但由另一条约定覆盖，
+不属于这 14 个被钉死的名字——它们不是回收站，而是会让遍历爆炸的开发目录。）
+
+> 推论：如果你自己写脚本扫挂载盘，**必须跳过 `@Recycle`**，否则统计会把已删除的
+> 数据算成在库数据——这类错误不会报错，只会安静地让数字偏大。
+
 ### 列举 — POST /v2/file/nb/list
 
 | 参数 | 说明 |
