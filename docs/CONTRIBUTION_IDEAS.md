@@ -95,12 +95,22 @@ fixture per skill. One skill per PR is fine. Family-level guidance already
 exists in `skills/README.md` → 「执行阶段的两个坑」, so a skill that hasn't
 been ported yet is at least documented.
 
-### 🟡 Per-skill config overrides — roadmap
-Whitelist dirs / extension sets via a `skills/<name>/config.json` overlay so
-scanners stop flagging intentional structures. Two concrete consumers today:
-`file-sorter`'s hardcoded `*_EXTS` category tables (a proprietary extension
-like `.rfa`/`.pln` currently needs a code edit to land in the right folder) and
-its `--keep-dir` whitelist (per-library, so it gets re-typed every run).
+### 🟢 Port the `config.json` overlay to the other 7 skills — roadmap #15 (partly shipped)
+The mechanism landed in #47 for **`file-sorter` and `photo-organizer`**: an
+optional `skills/<name>/config.json`, resolved next to the *installed script*
+(`__file__`, not cwd), carrying `whitelist_dirs` and `extension_overrides` — so a
+proprietary CAD extension or an intentional `原盘/VIDEO_TS` tree no longer needs
+a code edit that the next `pip install` overwrites. Read #47's implementation
+before porting; the remaining 7 skills (`nas-report`, `music-`, `work-`,
+`portfolio-organizer`, `download-cleaner`, `dedup-finder`, `backup-auditor`)
+still hardcode their compliant shapes. One skill per PR is fine, and each needs a
+smoke case proving the overlay is picked up from the script's own directory.
+
+> Note for the roadmap checkboxes: #15 is **partly** done, so it stays `[ ]` with
+> an annotation rather than getting ticked. This list has drifted three times now
+> (#16, #14, #15) because shipping a feature and updating the roadmap are
+> separate acts — if your PR closes or advances a roadmap item, tick/annotate it
+> in **both** READMEs and update this file in the same PR.
 
 > ✅ Shipped since this list was written:
 > - `photo-organizer --exif` (roadmap #14) — shells out to `exiftool`, falls back
